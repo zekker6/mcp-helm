@@ -1,0 +1,25 @@
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: "{{ .Tag }}-next"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^example:'
+
+dockers:
+  - image_templates:
+      - "ghcr.io/zekker6/mcp-helm:latest"
+      - "ghcr.io/zekker6/mcp-helm:{{ .Tag }}"

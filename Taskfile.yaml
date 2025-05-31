@@ -1,0 +1,42 @@
+version: '3'
+
+vars:
+  GIT_COMMIT: "asd"
+#    sh: git rev-list HEAD
+  BUILD_DATE:
+    sh: date --iso-8601=seconds
+
+tasks:
+  default:
+    cmds:
+      - task --list-all
+
+  lint:
+    deps:
+      - vet
+      - fmt
+      - golangci
+
+  vet:
+    cmds:
+      - go vet ./...
+
+  fmt:
+    cmds:
+      - gofmt -l -w -s ./
+
+  golangci:
+    cmds:
+      - golangci-lint run --modules-download-mode readonly --timeout=10m
+
+  test:
+    cmds:
+      - go test ./...
+
+  build:
+    cmds:
+      - go build -ldflags "-X main.version={{.GIT_COMMIT}} -X main.date={{.BUILD_DATE}}" -o tmp/mcp-helm
+
+  mcp:inspector:
+    cmds:
+      - mcp-inspector --config inspector-config.json --server mcp-helm
