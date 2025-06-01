@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -10,9 +11,9 @@ import (
 	"github.com/zekker6/mcp-helm/lib/helm_client"
 )
 
-func NewGetLatestVersionOfChartTool() mcp.Tool {
-	return mcp.NewTool("get_latest_version_of_chart",
-		mcp.WithDescription("Retrieves the latest version of the chart"),
+func NewGetChartValuesTool() mcp.Tool {
+	return mcp.NewTool("get_chat_values",
+		mcp.WithDescription("Retrieves values file for the chart"),
 		mcp.WithString("repository_url",
 			mcp.Required(),
 			mcp.Description("Helm repository URL"),
@@ -21,10 +22,12 @@ func NewGetLatestVersionOfChartTool() mcp.Tool {
 			mcp.Required(),
 			mcp.Description("Chart name"),
 		),
+		mcp.WithString("chart_version",
+			mcp.Description("Chart version. If omitted the latest version will be used")),
 	)
 }
 
-func GetLatestVersionOfCharHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
+func GetChartValuesHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		repositoryURL, err := request.RequireString("repository_url")
 		if err != nil {
@@ -38,11 +41,20 @@ func GetLatestVersionOfCharHandler(c *helm_client.HelmClient) server.ToolHandler
 		}
 		chartName = strings.TrimSpace(chartName)
 
-		version, err := c.GetChartLatestVersion(repositoryURL, chartName)
+		chartVersion := request.GetString("chart_version", "")
+		if chartVersion == "" {
+			chartVersion, err = c.GetChartLatestVersion(repositoryURL, chartName)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("failed to get the latest chart version: %v", err)), nil
+			}
+		}
+
+		charts, err := c.GetChartValues(repositoryURL, chartName, chartVersion)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list charts: %v", err)), nil
 		}
+		encoded, err := json.MarshalIndent(charts, "", "  ")
 
-		return mcp.NewToolResultText(version), nil
+		return mcp.NewToolResultText(string(encoded)), nil
 	}
 }

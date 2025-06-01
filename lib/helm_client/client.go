@@ -2,16 +2,23 @@ package helm_client
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"path"
+	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 
+	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
+	"helm.sh/helm/v3/pkg/downloader"
 	"helm.sh/helm/v3/pkg/getter"
 	"helm.sh/helm/v3/pkg/repo"
 )
 
 var (
-	helmCacheDir = "/tmp/helm_cache"
+	tmpDir = "/tmp/helm_cache"
 )
 
 type HelmClient struct {
@@ -23,7 +30,9 @@ type HelmClient struct {
 
 func NewClient() *HelmClient {
 	settings := cli.New()
-	settings.RepositoryCache = helmCacheDir
+	settings.RepositoryCache = path.Join(tmpDir, "helm-cache")
+	settings.RegistryConfig = path.Join(tmpDir, "helm-registry.conf")
+	settings.RepositoryConfig = path.Join(tmpDir, "helm-repository.conf")
 
 	return &HelmClient{
 		settings: settings,
@@ -110,7 +119,116 @@ func (c *HelmClient) ListChartVersions(repoURL string, chart string) ([]string, 
 			versions = append(versions, ver.Version)
 		}
 	}
+	// Do not sort version as those were sorted in original index file
 
-	sort.Strings(versions)
 	return versions, nil
+}
+
+func (c *HelmClient) GetChartValues(repoURL, chartName, version string) (string, error) {
+	// TODO: implement caching for values file
+	helmRepo, err := c.getRepo(repoURL, repoURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to get repository: %v", err)
+	}
+
+	var cv *repo.ChartVersion
+	for k, v := range helmRepo.IndexFile.Entries {
+		if k != chartName {
+			continue
+		}
+		for _, ver := range v {
+			if ver.Version != version {
+				continue
+			}
+			cv = ver
+			break // Found the specific version
+		}
+		if cv != nil {
+			break // Found the chart
+		}
+	}
+	if cv == nil {
+		return "", fmt.Errorf("failed to find chart %s version %s", chartName, version)
+	}
+
+	if len(cv.URLs) == 0 {
+		return "", fmt.Errorf("no download URLs found for chart %s version %s", chartName, version)
+	}
+
+	chartURL := cv.URLs[0]
+	// Ensure the URL is absolute
+	if !strings.HasPrefix(chartURL, "http://") && !strings.HasPrefix(chartURL, "https://") {
+		repoBaseURL := strings.TrimSuffix(helmRepo.Config.URL, "/")
+		chartURL = fmt.Sprintf("%s/%s", repoBaseURL, strings.TrimPrefix(chartURL, "/"))
+	}
+
+	// Create a temporary directory to download the chart
+	tempDir, err := os.MkdirTemp("", "helm-chart-")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	chartPath := filepath.Join(tempDir, fmt.Sprintf("%s-%s", chartName, version))
+	_ = os.MkdirAll(chartPath, 0755)
+
+	// Download the chart
+	dl := downloader.ChartDownloader{
+		Out:     io.Discard, // Suppress output
+		Keyring: "",         // Adjust if using keyring
+		Getters: getter.All(c.settings),
+		Options: []getter.Option{
+			getter.WithURL(helmRepo.Config.URL), // Pass repo URL for context if needed by getters
+		},
+		RepositoryConfig: c.settings.RepositoryConfig,
+		RepositoryCache:  c.settings.RepositoryCache,
+		Verify:           downloader.VerifyNever, // Adjust verification as needed
+	}
+
+	chartOutputPath, _, err := dl.DownloadTo(chartURL, version, chartPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to download chart %s version %s from %s: %v", chartName, version, chartURL, err)
+	}
+
+	// Load the downloaded chart
+	loadedChart, err := loader.Load(chartOutputPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to load chart from %s: %v", chartPath, err)
+	}
+
+	var rawContent []byte
+	for _, file := range loadedChart.Raw {
+		if file.Name != "values.yaml" {
+			continue
+		}
+		rawContent = file.Data
+		break
+	}
+
+	return string(rawContent), nil
+}
+
+func (c *HelmClient) GetChartLatestVersion(repoURL, chartName string) (string, error) {
+	helmRepo, err := c.getRepo(repoURL, repoURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to get repository: %v", err)
+	}
+
+	chartVersions, ok := helmRepo.IndexFile.Entries[chartName]
+	if !ok || len(chartVersions) == 0 {
+		return "", fmt.Errorf("chart %s not found in repository %s", chartName, repoURL)
+	}
+
+	// IndexFile.SortEntries() sorts versions in descending order, so the first one is the latest.
+	latestVersion := chartVersions[0].Version
+	return latestVersion, nil
+}
+
+func (c *HelmClient) GetChartLatestValues(repoURL, chartName string) (string, error) {
+	v, err := c.GetChartLatestVersion(repoURL, chartName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get chart %s version %s: %v", chartName, v, err)
+	}
+
+	return c.GetChartValues(repoURL, chartName, v)
 }

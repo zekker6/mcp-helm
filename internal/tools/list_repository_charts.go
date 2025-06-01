@@ -24,11 +24,11 @@ func NewListChartsTool() mcp.Tool {
 // GetListChartsHandler handles chart version finding requests
 func GetListChartsHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-
 		repositoryURL, err := request.RequireString("repository_url")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		repositoryURL = strings.TrimSpace(repositoryURL)
 
 		charts, err := c.ListCharts(repositoryURL)
 		if err != nil {
