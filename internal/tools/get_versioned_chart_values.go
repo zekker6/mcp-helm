@@ -54,6 +54,9 @@ func GetChartValuesHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list charts: %v", err)), nil
 		}
 		encoded, err := json.MarshalIndent(charts, "", "  ")
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to marshal charts: %v", err)), nil
+		}
 
 		return mcp.NewToolResultText(string(encoded)), nil
 	}

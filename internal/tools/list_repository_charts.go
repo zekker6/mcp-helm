@@ -10,7 +10,6 @@ import (
 	"github.com/zekker6/mcp-helm/lib/helm_client"
 )
 
-// NewListChartsTool creates a tool for finding chart versions
 func NewListChartsTool() mcp.Tool {
 	return mcp.NewTool("list_repository_charts",
 		mcp.WithDescription("Lists all charts available in the repository"),
@@ -21,7 +20,6 @@ func NewListChartsTool() mcp.Tool {
 	)
 }
 
-// GetListChartsHandler handles chart version finding requests
 func GetListChartsHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		repositoryURL, err := request.RequireString("repository_url")

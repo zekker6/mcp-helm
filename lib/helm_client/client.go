@@ -141,10 +141,10 @@ func (c *HelmClient) GetChartValues(repoURL, chartName, version string) (string,
 				continue
 			}
 			cv = ver
-			break // Found the specific version
+			break
 		}
 		if cv != nil {
-			break // Found the chart
+			break
 		}
 	}
 	if cv == nil {
@@ -156,33 +156,30 @@ func (c *HelmClient) GetChartValues(repoURL, chartName, version string) (string,
 	}
 
 	chartURL := cv.URLs[0]
-	// Ensure the URL is absolute
 	if !strings.HasPrefix(chartURL, "http://") && !strings.HasPrefix(chartURL, "https://") {
 		repoBaseURL := strings.TrimSuffix(helmRepo.Config.URL, "/")
 		chartURL = fmt.Sprintf("%s/%s", repoBaseURL, strings.TrimPrefix(chartURL, "/"))
 	}
 
-	// Create a temporary directory to download the chart
 	tempDir, err := os.MkdirTemp("", "helm-chart-")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	chartPath := filepath.Join(tempDir, fmt.Sprintf("%s-%s", chartName, version))
 	_ = os.MkdirAll(chartPath, 0755)
 
-	// Download the chart
 	dl := downloader.ChartDownloader{
-		Out:     io.Discard, // Suppress output
-		Keyring: "",         // Adjust if using keyring
+		Out:     io.Discard,
+		Keyring: "",
 		Getters: getter.All(c.settings),
 		Options: []getter.Option{
 			getter.WithURL(helmRepo.Config.URL), // Pass repo URL for context if needed by getters
 		},
 		RepositoryConfig: c.settings.RepositoryConfig,
 		RepositoryCache:  c.settings.RepositoryCache,
-		Verify:           downloader.VerifyNever, // Adjust verification as needed
+		Verify:           downloader.VerifyNever,
 	}
 
 	chartOutputPath, _, err := dl.DownloadTo(chartURL, version, chartPath)
