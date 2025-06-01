@@ -47,3 +47,4 @@ dockers:
   - image_templates:
       - "ghcr.io/zekker6/mcp-helm:latest"
       - "ghcr.io/zekker6/mcp-helm:{{ .Tag }}"
+    dockerfile: docker/Dockerfile.goreleaser
