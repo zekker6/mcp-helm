@@ -50,3 +50,5 @@ and execution.
     - [x] Get values for the latest version of the chart
     - [ ] Extract dependant charts from Charts.yaml
     - [ ] Extract images used in chart
+- [ ] Support using private registries
+  - [ ] Add a way to provide credentials
