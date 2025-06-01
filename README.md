@@ -18,6 +18,35 @@ The MCP Helm server provides the following tools:
 
 - Go 1.24.3 or later for building from source
 
+### Run with docker
+
+You can run the MCP Helm server using Docker. This is the easiest way to get started without needing to install Go or
+build from source.
+
+```bash
+docker run -d --name mcp-helm -p 8012:8012 --command ghcr.io/zekker6/mcp-helm:v0.0.2 --mode=sse
+```
+
+Note that the `--mode=sse` flag is used to enable Server-Sent Events mode, which used by MCP clients to connect.
+
+### Via pre-build binary
+
+Download binary from the [releases page](https://github.com/zekker6/mcp-helm/releases).
+
+Example for Linux x86_64 (note that other architectures and platforms are also available):
+
+```bash
+latest=$(curl -s https://api.github.com/repos/zekker6/mcp-helm/releases/latest | grep 'tag_name' | cut -d\" -f4)
+wget https://github.com/zekker6/mcp-helm/releases/download/$latest/mcp-helm_Linux_x86_64.tar.gz
+tar axvf mcp-helm_Linux_x86_64.tar.gz
+```
+
+### Install with Go
+
+```bash
+go install github.com/zekker6/mcp-helm@latest
+```
+
 ### Build from Source
 
 1. Clone the repository:
@@ -51,4 +80,4 @@ and execution.
     - [ ] Extract dependant charts from Charts.yaml
     - [ ] Extract images used in chart
 - [ ] Support using private registries
-  - [ ] Add a way to provide credentials
+    - [ ] Add a way to provide credentials
