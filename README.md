@@ -77,6 +77,7 @@ and execution.
     - [x] Get latest version of the chart
     - [x] Get values for chart
     - [x] Get values for the latest version of the chart
+    - [ ] Extract full chart content
     - [ ] Extract dependant charts from Charts.yaml
     - [ ] Extract images used in chart
 - [ ] Support using private registries
