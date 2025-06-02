@@ -35,7 +35,7 @@ tasks:
 
   build:
     cmds:
-      - go build -ldflags "-X main.version={{.GIT_COMMIT}} -X main.date={{.BUILD_DATE}}" -o tmp/mcp-helm
+      - go build -ldflags "-X main.version={{.GIT_COMMIT}} -X main.date={{.BUILD_DATE}}" -o tmp/mcp-helm ./cmd/mcp-helm
 
   mcp:inspector:
     cmds:
