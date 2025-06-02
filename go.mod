@@ -5,7 +5,7 @@ go 1.24.3
 require (
 	github.com/mark3labs/mcp-go v0.31.0
 	go.uber.org/zap v1.27.0
-	helm.sh/helm/v3 v3.18.1
+	helm.sh/helm/v3 v3.18.2
 )
 
 require (
