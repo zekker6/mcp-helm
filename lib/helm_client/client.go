@@ -144,7 +144,7 @@ func (c *HelmClient) GetChartValues(repoURL, chartName, version string) (string,
 	return string(rawContent), nil
 }
 
-func (c *HelmClient) GetChartContents(repoURL, chartName, version string) (string, error) {
+func (c *HelmClient) GetChartContents(repoURL, chartName, version string, recursive bool) (string, error) {
 	loadedChart, err := c.loadChart(repoURL, chartName, version)
 	if err != nil {
 		return "", fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
@@ -154,14 +154,11 @@ func (c *HelmClient) GetChartContents(repoURL, chartName, version string) (strin
 		return "", fmt.Errorf("chart %s version %s not found", chartName, version)
 	}
 
-	sb := strings.Builder{}
-	for _, file := range loadedChart.Files {
-		sb.WriteString(fmt.Sprintf("# file: %s\n", file.Name))
-		sb.Write(file.Data)
-		sb.WriteString("\n\n")
+	contents, err := helm_parser.GetChartContents(loadedChart, recursive)
+	if err != nil {
+		return "", fmt.Errorf("failed to get chart contents for %s version %s: %v", chartName, version, err)
 	}
-
-	return sb.String(), nil
+	return contents, nil
 }
 
 func (c *HelmClient) loadChart(repoURL string, chartName string, version string) (*chart.Chart, error) {

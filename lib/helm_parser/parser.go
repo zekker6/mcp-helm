@@ -3,6 +3,7 @@ package helm_parser
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v2"
 	"helm.sh/helm/v3/pkg/chart"
@@ -64,4 +65,24 @@ func GetChartDependencies(chart *chart.Chart) ([]string, error) {
 	}
 
 	return dependencies, nil
+}
+
+func GetChartContents(c *chart.Chart, recursive bool) (string, error) {
+	sb := strings.Builder{}
+	for _, file := range c.Files {
+		sb.WriteString(fmt.Sprintf("# file: %s/%s\n", c.Name(), file.Name))
+		sb.Write(file.Data)
+		sb.WriteString("\n\n")
+	}
+	if recursive {
+		for _, subChart := range c.Dependencies() {
+			sb.WriteString(fmt.Sprintf("# Subchart: %s\n", subChart.Name()))
+			subContent, err := GetChartContents(subChart, recursive)
+			if err != nil {
+				return "", fmt.Errorf("failed to get contents for subchart %s: %v", subChart.Name(), err)
+			}
+			sb.WriteString(subContent)
+		}
+	}
+	return sb.String(), nil
 }

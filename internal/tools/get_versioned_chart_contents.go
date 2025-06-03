@@ -23,7 +23,11 @@ func NewGetChartContentsTool() mcp.Tool {
 			mcp.Description("Chart name"),
 		),
 		mcp.WithString("chart_version",
-			mcp.Description("Chart version. If omitted the latest version will be used")),
+			mcp.Description("Chart version. If omitted the latest version will be used"),
+		),
+		mcp.WithBoolean("recursive",
+			mcp.Description("If true, retrieves all files in the chart recursively. Defaults to false"),
+		),
 	)
 }
 
@@ -49,7 +53,9 @@ func GetChartContentsHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 			}
 		}
 
-		charts, err := c.GetChartContents(repositoryURL, chartName, chartVersion)
+		recursive := request.GetBool("recursive", false)
+
+		charts, err := c.GetChartContents(repositoryURL, chartName, chartVersion, recursive)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list charts: %v", err)), nil
 		}
