@@ -3,8 +3,8 @@ testdata_dir = "testdata"
 tmp_dir = "tmp"
 
 [build]
-  args_bin = []
-  bin = "./tmp/mcp-helm -logLevel=debug -mode=sse"
+  args_bin = ["-logLevel=debug", "-mode=sse"]
+  bin = "./tmp/mcp-helm"
   cmd = "go build -o ./tmp/mcp-helm ./cmd/mcp-helm/main.go"
   delay = 1000
   exclude_dir = ["assets", "tmp", "vendor", "testdata"]

@@ -11,6 +11,7 @@ The MCP Helm server provides the following tools:
 - **list_repository_charts** - Lists all charts available in a Helm repository
 - **get_latest_version_of_chart** - Retrieves the latest version of a specific chart
 - **get_chart_values** - Retrieves the values file for a chart (latest version or specific version)
+- **get_chat_contents** - Retrieves the contents of a chart (including templates, values, and metadata).
 
 ## Installation
 
@@ -77,7 +78,7 @@ and execution.
     - [x] Get latest version of the chart
     - [x] Get values for chart
     - [x] Get values for the latest version of the chart
-    - [ ] Extract full chart content
+    - [x] Extract full chart content
     - [ ] Extract dependant charts from Charts.yaml
     - [ ] Extract images used in chart
 - [ ] Support using private registries
