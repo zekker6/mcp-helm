@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/zekker6/mcp-helm/lib/helm_parser"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/cli"
@@ -257,4 +258,21 @@ func (c *HelmClient) GetChartLatestValues(repoURL, chartName string) (string, er
 	}
 
 	return c.GetChartValues(repoURL, chartName, v)
+}
+
+func (c *HelmClient) GetChartDependencies(repoURL, chartName, version string) ([]string, error) {
+	loadedChart, err := c.loadChart(repoURL, chartName, version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
+	}
+
+	if loadedChart == nil {
+		return nil, fmt.Errorf("chart %s version %s not found", chartName, version)
+	}
+
+	deps, err := helm_parser.GetChartDependencies(loadedChart)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dependencies for chart %s version %s: %v", chartName, version, err)
+	}
+	return deps, nil
 }
