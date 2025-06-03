@@ -20,17 +20,13 @@ There is a publicly available instance of the MCP Helm server that you can use t
 
 ## Installation
 
-### Prerequisites
-
-- Go 1.24.3 or later for building from source
-
 ### Run with docker
 
 You can run the MCP Helm server using Docker. This is the easiest way to get started without needing to install Go or
 build from source.
 
 ```bash
-docker run -d --name mcp-helm -p 8012:8012 --command ghcr.io/zekker6/mcp-helm:v0.0.2 --mode=sse
+docker run -d --name mcp-helm -p 8012:8012 --command ghcr.io/zekker6/mcp-helm:v0.0.4 4 4 4 mode=sse
 ```
 
 Note that the `--mode=sse` flag is used to enable Server-Sent Events mode, which used by MCP clients to connect.
@@ -47,13 +43,25 @@ wget https://github.com/zekker6/mcp-helm/releases/download/$latest/mcp-helm_Linu
 tar axvf mcp-helm_Linux_x86_64.tar.gz
 ```
 
+### Via Mise
+
+Mise ([mise-en-place](https://mise.jdx.dev/)) is a development environment setup tool.
+
+```bash
+mise i ubi:zekker6/mcp-helm@latest
+```
+
 ### Install with Go
+
+> Note: Go 1.24.3 is required.
 
 ```bash
 go install github.com/zekker6/mcp-helm/cmd/mcp-helm@latest
 ```
 
 ### Build from Source
+
+> Note: Go 1.24.3 is required.
 
 1. Clone the repository:
    ```bash
