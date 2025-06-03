@@ -50,7 +50,7 @@ tar axvf mcp-helm_Linux_x86_64.tar.gz
 ### Install with Go
 
 ```bash
-go install github.com/zekker6/mcp-helm@latest
+go install github.com/zekker6/mcp-helm/cmd/mcp-helm@latest
 ```
 
 ### Build from Source
