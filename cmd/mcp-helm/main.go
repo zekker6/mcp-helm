@@ -52,6 +52,7 @@ func main() {
 	s.AddTool(tools.NewListChartsTool(), tools.GetListChartsHandler(helmClient))
 	s.AddTool(tools.NewGetLatestVersionOfChartTool(), tools.GetLatestVersionOfCharHandler(helmClient))
 	s.AddTool(tools.NewGetChartValuesTool(), tools.GetChartValuesHandler(helmClient))
+	s.AddTool(tools.NewGetChartContentsTool(), tools.GetChartContentsHandler(helmClient))
 
 	logger.Info("Starting MCP Helm server",
 		zap.String("version", version),
