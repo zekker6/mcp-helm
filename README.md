@@ -14,6 +14,10 @@ The MCP Helm server provides the following tools:
 - **get_chat_contents** - Retrieves the contents of a chart (including templates, values, and metadata).
 - **get_chat_dependencies** - Retrieves the dependencies of a chart as defined in its `Chart.yaml` file.
 
+## Try without installation
+
+There is a publicly available instance of the MCP Helm server that you can use to test the features without installing it: https://mcp-helm.zekker.dev/sse
+
 ## Installation
 
 ### Prerequisites
