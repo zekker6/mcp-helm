@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/zekker6/mcp-helm/internal/tools"
@@ -18,7 +19,7 @@ var (
 )
 
 var (
-	mode           = flag.String("mode", "stdio", "Mode to run the MCP server in (stdio, sse)")
+	mode           = flag.String("mode", "stdio", "Mode to run the MCP server in (stdio, sse, http)")
 	httpListenAddr = flag.String("httpListenAddr", ":8012", "Address to listen for http connections in sse mode")
 )
 
@@ -28,17 +29,19 @@ func main() {
 	logger.Init()
 	defer logger.Stop()
 
-	// verify config
-	if *mode != "stdio" && *mode != "sse" {
-		logger.Error("Invalid mode specified", zap.String("mode", *mode))
-		fmt.Printf("Invalid mode specified: %s. Supported modes are 'stdio' and 'sse'.\n", *mode)
-		return
+	switch *mode {
+	case "stdio", "sse", "http":
+	default:
+		logger.Error("Invalid mode specified: %s. Supported modes are 'stdio', 'sse', and 'http'", zap.String("mode", *mode))
+		os.Exit(1)
 	}
 
-	if *mode == "sse" && *httpListenAddr == "" {
-		logger.Error("HTTP listen address must be specified in sse mode", zap.String("httpListenAddr", *httpListenAddr))
-		fmt.Println("HTTP listen address must be specified in sse mode. Use --httpListenAddr to set it.")
-		return
+	switch *mode {
+	case "sse", "http":
+		if *httpListenAddr == "" {
+			logger.Error("HTTP listen address must be specified in sse mode. Use -httpListenAddr to set it", zap.String("httpListenAddr", *httpListenAddr))
+			os.Exit(1)
+		}
 	}
 
 	s := server.NewMCPServer(
@@ -63,14 +66,22 @@ func main() {
 		zap.String("httpListenAddr", *httpListenAddr),
 	)
 
-	if *mode == "sse" {
+	switch *mode {
+	case "stdio":
+		if err := server.ServeStdio(s); err != nil {
+			logger.Error("Failed to start MCP server in stdio mode", zap.Error(err))
+		}
+	case "sse":
 		srv := server.NewSSEServer(s)
 		if err := srv.Start(*httpListenAddr); err != nil {
 			logger.Error("Failed to start SSE server", zap.Error(err))
 		}
-	} else {
-		if err := server.ServeStdio(s); err != nil {
-			logger.Error("Failed to start MCP server in stdio mode", zap.Error(err))
+	case "http":
+		srv := server.NewStreamableHTTPServer(s)
+		if err := srv.Start(*httpListenAddr); err != nil {
+			logger.Error("Failed to start HTTP server", zap.Error(err))
 		}
+	default:
+		logger.Error("Unsupported mode specified", zap.String("mode", *mode))
 	}
 }
