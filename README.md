@@ -35,10 +35,11 @@ You can run the MCP Helm server using Docker. This is the easiest way to get sta
 build from source.
 
 ```bash
-docker run -d --name mcp-helm -p 8012:8012 --command ghcr.io/zekker6/mcp-helm:v0.0.4 4 4 4 mode=sse
+docker run -d --name mcp-helm -p 8012:8012 --command ghcr.io/zekker6/mcp-helm:v0.0.5 -mode=sse
 ```
 
 Note that the `--mode=sse` flag is used to enable Server-Sent Events mode, which used by MCP clients to connect.
+Alternatively, you can use `-mode=http` to enable Streamable HTTP mode.
 
 ### Via pre-build binary
 
