@@ -2,7 +2,15 @@
 
 An MCP (Model Context Protocol) server that provides tools for interacting with Helm repositories and charts. This
 server enables AI assistants to query Helm repositories, retrieve chart information, and access chart values without
-requiring local Helm installations.
+requiring local Helm installation.
+
+The purpose of using MCP for Helm is to avoid making up format of `values.yaml` and contents of the charts when working
+with LLMs. 
+Instead, the server provides a standardized way to access this information, making it easier for AI assistants to
+interact with Helm charts and repositories.
+
+This MCP server is and will be providing tools for working with Helm repositories only. If you need to work with other
+Kubernetes resources, consider using a separate MCP server that provides tools for Kubernetes resources.
 
 ## Features
 
@@ -16,7 +24,8 @@ The MCP Helm server provides the following tools:
 
 ## Try without installation
 
-There is a publicly available instance of the MCP Helm server that you can use to test the features without installing it: https://mcp-helm.zekker.dev/sse
+There is a publicly available instance of the MCP Helm server that you can use to test the features without installing
+it: https://mcp-helm.zekker.dev/sse
 
 ## Installation
 
