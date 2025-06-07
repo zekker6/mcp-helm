@@ -18,9 +18,6 @@ func TestNewClient(t *testing.T) {
 	if client.settings == nil {
 		t.Fatal("client.settings is nil")
 	}
-	if client.repos == nil {
-		// This is fine, repos is initialized on first use
-	}
 }
 
 func TestListCharts(t *testing.T) {

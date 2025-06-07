@@ -171,8 +171,8 @@ func TestGetChartDependencies(t *testing.T) {
 
 	// Verify dependency content
 	var firstDep, secondDep DependencyItem
-	json.Unmarshal([]byte(deps[0]), &firstDep)
-	json.Unmarshal([]byte(deps[1]), &secondDep)
+	_ = json.Unmarshal([]byte(deps[0]), &firstDep)
+	_ = json.Unmarshal([]byte(deps[1]), &secondDep)
 
 	if firstDep.Name != "dependency1" {
 		t.Fatalf("Expected first dependency name to be 'dependency1', got '%s'", firstDep.Name)
