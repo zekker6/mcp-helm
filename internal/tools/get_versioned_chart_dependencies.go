@@ -12,7 +12,7 @@ import (
 )
 
 func NewGetChartDependenciesTool() mcp.Tool {
-	return mcp.NewTool("get_chat_dependencies",
+	return mcp.NewTool("get_chart_dependencies",
 		mcp.WithDescription("Retrieves dependencies for the chart"),
 		mcp.WithString("repository_url",
 			mcp.Required(),

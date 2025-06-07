@@ -12,7 +12,7 @@ import (
 )
 
 func NewGetChartValuesTool() mcp.Tool {
-	return mcp.NewTool("get_chat_values",
+	return mcp.NewTool("get_chart_values",
 		mcp.WithDescription("Retrieves values file for the chart"),
 		mcp.WithString("repository_url",
 			mcp.Required(),
