@@ -1,5 +1,5 @@
 [tools]
-act = "0.2.78"
+act = "0.2.79"
 goreleaser = "2.9.0"
 task = "3.43.3"
 golangci-lint = "2.2.1"
