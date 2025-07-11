@@ -19,8 +19,9 @@ var (
 )
 
 var (
-	mode           = flag.String("mode", "stdio", "Mode to run the MCP server in (stdio, sse, http)")
-	httpListenAddr = flag.String("httpListenAddr", ":8012", "Address to listen for http connections in sse mode")
+	mode              = flag.String("mode", "stdio", "Mode to run the MCP server in (stdio, sse, http)")
+	httpListenAddr    = flag.String("httpListenAddr", ":8012", "Address to listen for http connections in sse mode")
+	heartbeatInterval = flag.Duration("httpHeartbeatInterval", 30, "Interval for sending heartbeat messages in seconds. Only used when -mode=http (default: 30 seconds)")
 )
 
 func main() {
@@ -77,7 +78,11 @@ func main() {
 			logger.Error("Failed to start SSE server", zap.Error(err))
 		}
 	case "http":
-		srv := server.NewStreamableHTTPServer(s)
+		var opts []server.StreamableHTTPOption
+		if *heartbeatInterval > 0 {
+			opts = append(opts, server.WithHeartbeatInterval(*heartbeatInterval))
+		}
+		srv := server.NewStreamableHTTPServer(s, opts...)
 		if err := srv.Start(*httpListenAddr); err != nil {
 			logger.Error("Failed to start HTTP server", zap.Error(err))
 		}
