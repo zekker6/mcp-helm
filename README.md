@@ -25,7 +25,7 @@ The MCP Helm server provides the following tools:
 ## Try without installation
 
 There is a publicly available instance of the MCP Helm server that you can use to test the features without installing
-it: https://mcp-helm.zekker.dev/sse
+it: https://mcp-helm.zekker.dev/mcp
 
 ## Installation
 
