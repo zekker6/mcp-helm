@@ -16,7 +16,7 @@ replace (
 	k8s.io/client-go => k8s.io/client-go v0.32.3
 	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20250701173324-9bd5c66d9911
 	k8s.io/utils => k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
-	sigs.k8s.io/structured-merge-diff/v4 => sigs.k8s.io/structured-merge-diff/v4 v4.7.0
+	sigs.k8s.io/structured-merge-diff/v6 => sigs.k8s.io/structured-merge-diff/v4 v6.3.0
 )
 
 require (
