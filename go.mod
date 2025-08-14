@@ -6,7 +6,7 @@ require (
 	github.com/mark3labs/mcp-go v0.37.0
 	go.uber.org/zap v1.27.0
 	gopkg.in/yaml.v2 v2.4.0
-	helm.sh/helm/v3 v3.18.4
+	helm.sh/helm/v3 v3.18.5
 )
 
 // Pin deps until https://github.com/kubernetes/apimachinery/issues/190 is resolved
@@ -75,6 +75,7 @@ require (
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/cast v1.9.2 // indirect
 	github.com/spf13/cobra v1.9.1 // indirect
