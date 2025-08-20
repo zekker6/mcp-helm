@@ -6,7 +6,7 @@ require (
 	github.com/mark3labs/mcp-go v0.37.0
 	go.uber.org/zap v1.27.0
 	gopkg.in/yaml.v2 v2.4.0
-	helm.sh/helm/v3 v3.18.5
+	helm.sh/helm/v3 v3.18.6
 )
 
 require (
