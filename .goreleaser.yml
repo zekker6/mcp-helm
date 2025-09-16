@@ -43,55 +43,15 @@ changelog:
       - '^test:'
       - '^example:'
 
-dockers:
-  - image_templates:
-      - "ghcr.io/zekker6/mcp-helm:latest-linux-amd64"
-      - "ghcr.io/zekker6/mcp-helm:{{ .Tag }}-linux-amd64"
+dockers_v2:
+  - images:
+      - ghcr.io/zekker6/mcp-helm
+    tags:
+      - latest
+      - "{{ .Tag }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+      - darwin/amd64
+      - darwin/arm64
     dockerfile: docker/Dockerfile.goreleaser
-    build_flag_templates:
-      - "--pull"
-      - "--platform=linux/amd64"
-    goos: linux
-    goarch: amd64
-  - image_templates:
-      - "ghcr.io/zekker6/mcp-helm:latest-linux-arm64"
-      - "ghcr.io/zekker6/mcp-helm:{{ .Tag }}-linux-arm64"
-    dockerfile: docker/Dockerfile.goreleaser
-    build_flag_templates:
-      - "--pull"
-      - "--platform=linux/arm64"
-    goos: linux
-    goarch: arm64
-  - image_templates:
-      - "ghcr.io/zekker6/mcp-helm:latest-darwin-amd64"
-      - "ghcr.io/zekker6/mcp-helm:{{ .Tag }}-darwin-amd64"
-    dockerfile: docker/Dockerfile.goreleaser
-    build_flag_templates:
-      - "--pull"
-      - "--platform=darwin/amd64"
-    goos: darwin
-    goarch: amd64
-  - image_templates:
-      - "ghcr.io/zekker6/mcp-helm:latest-darwin-arm64"
-      - "ghcr.io/zekker6/mcp-helm:{{ .Tag }}-darwin-arm64"
-    dockerfile: docker/Dockerfile.goreleaser
-    build_flag_templates:
-      - "--pull"
-      - "--platform=darwin/arm64"
-    goos: darwin
-    goarch: arm64
-
-docker_manifests:
-  - name_template: "ghcr.io/zekker6/mcp-helm:latest"
-    image_templates:
-      - "ghcr.io/zekker6/mcp-helm:latest-linux-amd64"
-      - "ghcr.io/zekker6/mcp-helm:latest-linux-arm64"
-      - "ghcr.io/zekker6/mcp-helm:latest-darwin-amd64"
-      - "ghcr.io/zekker6/mcp-helm:latest-darwin-arm64"
-  - name_template: "ghcr.io/zekker6/mcp-helm:{{ .Tag }}"
-    image_templates:
-      - "ghcr.io/zekker6/mcp-helm:{{ .Tag }}-linux-amd64"
-      - "ghcr.io/zekker6/mcp-helm:{{ .Tag }}-linux-arm64"
-      - "ghcr.io/zekker6/mcp-helm:{{ .Tag }}-darwin-amd64"
-      - "ghcr.io/zekker6/mcp-helm:{{ .Tag }}-darwin-arm64"
-
