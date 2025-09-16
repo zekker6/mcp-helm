@@ -52,6 +52,4 @@ dockers_v2:
     platforms:
       - linux/amd64
       - linux/arm64
-      - darwin/amd64
-      - darwin/arm64
     dockerfile: docker/Dockerfile.goreleaser
