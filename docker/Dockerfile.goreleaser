@@ -1,6 +1,7 @@
 FROM alpine:3.22
 
-COPY mcp-helm  /mcp-helm
+ARG TARGETPLATFORM
+COPY $TARGETPLATFORM/mcp-helm /mcp-helm
 
 EXPOSE      8012
 ENTRYPOINT  [ "/mcp-helm" ]
