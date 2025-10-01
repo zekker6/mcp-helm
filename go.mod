@@ -3,7 +3,7 @@ module github.com/zekker6/mcp-helm
 go 1.24.3
 
 require (
-	github.com/mark3labs/mcp-go v0.41.0
+	github.com/mark3labs/mcp-go v0.41.1
 	go.uber.org/zap v1.27.0
 	gopkg.in/yaml.v2 v2.4.0
 	helm.sh/helm/v3 v3.19.0
