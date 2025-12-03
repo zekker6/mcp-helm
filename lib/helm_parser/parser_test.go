@@ -5,7 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"helm.sh/helm/v3/pkg/chart"
+	"helm.sh/helm/v4/pkg/chart/common"
+	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 )
 
 // DependencyItem represents a chart dependency for testing
@@ -16,13 +17,13 @@ type DependencyItem struct {
 }
 
 // createMockChart creates a mock chart for testing
-func createMockChart() *chart.Chart {
-	return &chart.Chart{
-		Metadata: &chart.Metadata{
+func createMockChart() *chartv2.Chart {
+	return &chartv2.Chart{
+		Metadata: &chartv2.Metadata{
 			Name:    "test-chart",
 			Version: "1.0.0",
 		},
-		Raw: []*chart.File{
+		Raw: []*common.File{
 			{
 				Name: "Chart.yaml",
 				Data: []byte(`
@@ -38,7 +39,7 @@ dependencies:
 `),
 			},
 		},
-		Files: []*chart.File{
+		Files: []*common.File{
 			{
 				Name: "values.yaml",
 				Data: []byte(`
@@ -62,13 +63,13 @@ metadata:
 }
 
 // createMockSubchart creates a mock subchart for testing
-func createMockSubchart() *chart.Chart {
-	return &chart.Chart{
-		Metadata: &chart.Metadata{
+func createMockSubchart() *chartv2.Chart {
+	return &chartv2.Chart{
+		Metadata: &chartv2.Metadata{
 			Name:    "subchart",
 			Version: "1.0.0",
 		},
-		Raw: []*chart.File{
+		Raw: []*common.File{
 			{
 				Name: "Chart.yaml",
 				Data: []byte(`
@@ -77,7 +78,7 @@ version: 1.0.0
 `),
 			},
 		},
-		Files: []*chart.File{
+		Files: []*common.File{
 			{
 				Name: "values.yaml",
 				Data: []byte(`

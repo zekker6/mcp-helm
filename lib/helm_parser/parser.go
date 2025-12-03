@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v2"
-	"helm.sh/helm/v3/pkg/chart"
+	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 )
 
 type chartSchema struct {
@@ -19,7 +19,7 @@ type dependencyItem struct {
 	Repository string `json:"repository" yaml:"repository"`
 }
 
-func GetChartDependencies(chart *chart.Chart) ([]string, error) {
+func GetChartDependencies(chart *chartv2.Chart) ([]string, error) {
 	var chartYAML []byte
 	for _, file := range chart.Raw {
 		if file.Name == "Chart.yaml" {
@@ -67,7 +67,7 @@ func GetChartDependencies(chart *chart.Chart) ([]string, error) {
 	return dependencies, nil
 }
 
-func GetChartContents(c *chart.Chart, recursive bool) (string, error) {
+func GetChartContents(c *chartv2.Chart, recursive bool) (string, error) {
 	sb := strings.Builder{}
 	for _, file := range c.Files {
 		sb.WriteString(fmt.Sprintf("# file: %s/%s\n", c.Name(), file.Name))

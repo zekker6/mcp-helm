@@ -10,13 +10,14 @@ import (
 	"strings"
 	"sync"
 
+	"helm.sh/helm/v4/pkg/chart/loader"
+	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
+	"helm.sh/helm/v4/pkg/cli"
+	"helm.sh/helm/v4/pkg/downloader"
+	"helm.sh/helm/v4/pkg/getter"
+	"helm.sh/helm/v4/pkg/repo/v1"
+
 	"github.com/zekker6/mcp-helm/lib/helm_parser"
-	"helm.sh/helm/v3/pkg/chart"
-	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/cli"
-	"helm.sh/helm/v3/pkg/downloader"
-	"helm.sh/helm/v3/pkg/getter"
-	"helm.sh/helm/v3/pkg/repo"
 )
 
 var (
@@ -59,7 +60,7 @@ func (c *HelmClient) getRepo(name, url string) (*repo.ChartRepository, error) {
 		URL:  url,
 	}, getter.All(c.settings))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create chart repository: %v", err)
+		return nil, fmt.Errorf("failed to create chartv2 repository: %v", err)
 	}
 
 	indexFileLocation, err := requestedRepo.DownloadIndexFile()
@@ -129,7 +130,7 @@ func (c *HelmClient) ListChartVersions(repoURL string, chart string) ([]string, 
 func (c *HelmClient) GetChartValues(repoURL, chartName, version string) (string, error) {
 	loadedChart, err := c.loadChart(repoURL, chartName, version)
 	if err != nil {
-		return "", fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
+		return "", fmt.Errorf("failed to load chartv2 %s version %s: %v", chartName, version, err)
 	}
 
 	var rawContent []byte
@@ -147,21 +148,21 @@ func (c *HelmClient) GetChartValues(repoURL, chartName, version string) (string,
 func (c *HelmClient) GetChartContents(repoURL, chartName, version string, recursive bool) (string, error) {
 	loadedChart, err := c.loadChart(repoURL, chartName, version)
 	if err != nil {
-		return "", fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
+		return "", fmt.Errorf("failed to load chartv2 %s version %s: %v", chartName, version, err)
 	}
 
 	if loadedChart == nil {
-		return "", fmt.Errorf("chart %s version %s not found", chartName, version)
+		return "", fmt.Errorf("chartv2 %s version %s not found", chartName, version)
 	}
 
 	contents, err := helm_parser.GetChartContents(loadedChart, recursive)
 	if err != nil {
-		return "", fmt.Errorf("failed to get chart contents for %s version %s: %v", chartName, version, err)
+		return "", fmt.Errorf("failed to get chartv2 contents for %s version %s: %v", chartName, version, err)
 	}
 	return contents, nil
 }
 
-func (c *HelmClient) loadChart(repoURL string, chartName string, version string) (*chart.Chart, error) {
+func (c *HelmClient) loadChart(repoURL string, chartName string, version string) (*chartv2.Chart, error) {
 	// TODO: implement caching for values file
 	helmRepo, err := c.getRepo(repoURL, repoURL)
 	if err != nil {
@@ -185,11 +186,11 @@ func (c *HelmClient) loadChart(repoURL string, chartName string, version string)
 		}
 	}
 	if cv == nil {
-		return nil, fmt.Errorf("failed to find chart %s version %s", chartName, version)
+		return nil, fmt.Errorf("failed to find chartv2 %s version %s", chartName, version)
 	}
 
 	if len(cv.URLs) == 0 {
-		return nil, fmt.Errorf("no download URLs found for chart %s version %s", chartName, version)
+		return nil, fmt.Errorf("no download URLs found for chartv2 %s version %s", chartName, version)
 	}
 
 	chartURL := cv.URLs[0]
@@ -198,7 +199,7 @@ func (c *HelmClient) loadChart(repoURL string, chartName string, version string)
 		chartURL = fmt.Sprintf("%s/%s", repoBaseURL, strings.TrimPrefix(chartURL, "/"))
 	}
 
-	tempDir, err := os.MkdirTemp("", "helm-chart-")
+	tempDir, err := os.MkdirTemp("", "helm-chartv2-")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %v", err)
 	}
@@ -216,20 +217,27 @@ func (c *HelmClient) loadChart(repoURL string, chartName string, version string)
 		},
 		RepositoryConfig: c.settings.RepositoryConfig,
 		RepositoryCache:  c.settings.RepositoryCache,
+		ContentCache:     c.settings.ContentCache,
 		Verify:           downloader.VerifyNever,
 	}
 
 	chartOutputPath, _, err := dl.DownloadTo(chartURL, version, chartPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download chart %s version %s from %s: %v", chartName, version, chartURL, err)
+		return nil, fmt.Errorf("failed to download chartv2 %s version %s from %s: %v", chartName, version, chartURL, err)
 	}
 
-	// Load the downloaded chart
+	// Load the downloaded chartv2
 	loadedChart, err := loader.Load(chartOutputPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load chart from %s: %v", chartPath, err)
+		return nil, fmt.Errorf("failed to load chartv2 from %s: %v", chartPath, err)
 	}
-	return loadedChart, nil
+
+	v2Chart, ok := loadedChart.(*chartv2.Chart)
+	if !ok {
+		return nil, fmt.Errorf("charts V3 format is not supported")
+	}
+
+	return v2Chart, nil
 }
 
 func (c *HelmClient) GetChartLatestVersion(repoURL, chartName string) (string, error) {
@@ -240,7 +248,7 @@ func (c *HelmClient) GetChartLatestVersion(repoURL, chartName string) (string, e
 
 	chartVersions, ok := helmRepo.IndexFile.Entries[chartName]
 	if !ok || len(chartVersions) == 0 {
-		return "", fmt.Errorf("chart %s not found in repository %s", chartName, repoURL)
+		return "", fmt.Errorf("chartv2 %s not found in repository %s", chartName, repoURL)
 	}
 
 	// IndexFile.SortEntries() sorts versions in descending order, so the first one is the latest.
@@ -251,7 +259,7 @@ func (c *HelmClient) GetChartLatestVersion(repoURL, chartName string) (string, e
 func (c *HelmClient) GetChartLatestValues(repoURL, chartName string) (string, error) {
 	v, err := c.GetChartLatestVersion(repoURL, chartName)
 	if err != nil {
-		return "", fmt.Errorf("failed to get chart %s version %s: %v", chartName, v, err)
+		return "", fmt.Errorf("failed to get chartv2 %s version %s: %v", chartName, v, err)
 	}
 
 	return c.GetChartValues(repoURL, chartName, v)
@@ -260,16 +268,16 @@ func (c *HelmClient) GetChartLatestValues(repoURL, chartName string) (string, er
 func (c *HelmClient) GetChartDependencies(repoURL, chartName, version string) ([]string, error) {
 	loadedChart, err := c.loadChart(repoURL, chartName, version)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
+		return nil, fmt.Errorf("failed to load chartv2 %s version %s: %v", chartName, version, err)
 	}
 
 	if loadedChart == nil {
-		return nil, fmt.Errorf("chart %s version %s not found", chartName, version)
+		return nil, fmt.Errorf("chartv2 %s version %s not found", chartName, version)
 	}
 
 	deps, err := helm_parser.GetChartDependencies(loadedChart)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dependencies for chart %s version %s: %v", chartName, version, err)
+		return nil, fmt.Errorf("failed to get dependencies for chartv2 %s version %s: %v", chartName, version, err)
 	}
 	return deps, nil
 }
