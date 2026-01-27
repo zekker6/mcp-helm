@@ -152,3 +152,38 @@ func TestGetChartDependencies(t *testing.T) {
 		t.Fatal("GetChartDependencies() returned nil slice")
 	}
 }
+
+func TestGetChartImages(t *testing.T) {
+	client := NewClient()
+
+	// Get the latest version first
+	version, err := client.GetChartLatestVersion(testRepoURL, testChartName)
+	if err != nil {
+		t.Fatalf("GetChartLatestVersion() error = %v", err)
+	}
+
+	images, err := client.GetChartImages(testRepoURL, testChartName, version, nil, false)
+	if err != nil {
+		t.Fatalf("GetChartImages() error = %v", err)
+	}
+
+	// The chart should have at least one image
+	if len(images) == 0 {
+		t.Fatal("GetChartImages() returned no images")
+	}
+
+	// Check that images have required fields
+	for _, img := range images {
+		if img.FullImage == "" {
+			t.Error("Image has empty FullImage")
+		}
+		if img.Source == "" {
+			t.Error("Image has empty Source")
+		}
+	}
+
+	t.Logf("Found %d images:", len(images))
+	for _, img := range images {
+		t.Logf("  - %s (from %s)", img.FullImage, img.Source)
+	}
+}

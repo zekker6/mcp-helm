@@ -281,3 +281,20 @@ func (c *HelmClient) GetChartDependencies(repoURL, chartName, version string) ([
 	}
 	return deps, nil
 }
+
+func (c *HelmClient) GetChartImages(repoURL, chartName, version string, customValues map[string]interface{}, recursive bool) ([]helm_parser.ImageReference, error) {
+	loadedChart, err := c.loadChart(repoURL, chartName, version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load chartv2 %s version %s: %v", chartName, version, err)
+	}
+
+	if loadedChart == nil {
+		return nil, fmt.Errorf("chartv2 %s version %s not found", chartName, version)
+	}
+
+	images, err := helm_parser.GetChartImages(loadedChart, customValues, recursive)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract images from chartv2 %s version %s: %v", chartName, version, err)
+	}
+	return images, nil
+}
