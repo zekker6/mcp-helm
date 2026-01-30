@@ -27,7 +27,7 @@ tasks:
 
   golangci:
     cmds:
-      - golangci-lint run --modules-download-mode readonly --timeout=10m
+      - golangci-lint run
 
   test:
     cmds:
