@@ -8,10 +8,25 @@ import (
 const (
 	testRepoURL   = "https://zekker6.github.io/helm-charts"
 	testChartName = "readeck"
+
+	testOCIRepoURL   = "oci://ghcr.io/victoriametrics/helm-charts/victoria-logs-single"
+	testOCIChartName = "" // Chart name is in the URL
 )
 
+func newTestClient(t *testing.T) *HelmClient {
+	t.Helper()
+	client, err := NewClient()
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	return client
+}
+
 func TestNewClient(t *testing.T) {
-	client := NewClient()
+	client, err := NewClient()
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
 	if client == nil {
 		t.Fatal("NewClient() returned nil")
 	}
@@ -21,7 +36,7 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestListCharts(t *testing.T) {
-	client := NewClient()
+	client := newTestClient(t)
 	charts, err := client.ListCharts(testRepoURL)
 	if err != nil {
 		t.Fatalf("ListCharts() error = %v", err)
@@ -44,7 +59,7 @@ func TestListCharts(t *testing.T) {
 }
 
 func TestListChartVersions(t *testing.T) {
-	client := NewClient()
+	client := newTestClient(t)
 	versions, err := client.ListChartVersions(testRepoURL, testChartName)
 	if err != nil {
 		t.Fatalf("ListChartVersions() error = %v", err)
@@ -55,7 +70,7 @@ func TestListChartVersions(t *testing.T) {
 }
 
 func TestGetChartLatestVersion(t *testing.T) {
-	client := NewClient()
+	client := newTestClient(t)
 	version, err := client.GetChartLatestVersion(testRepoURL, testChartName)
 	if err != nil {
 		t.Fatalf("GetChartLatestVersion() error = %v", err)
@@ -66,7 +81,7 @@ func TestGetChartLatestVersion(t *testing.T) {
 }
 
 func TestGetChartValues(t *testing.T) {
-	client := NewClient()
+	client := newTestClient(t)
 
 	// Get the latest version first
 	version, err := client.GetChartLatestVersion(testRepoURL, testChartName)
@@ -89,7 +104,7 @@ func TestGetChartValues(t *testing.T) {
 }
 
 func TestGetChartLatestValues(t *testing.T) {
-	client := NewClient()
+	client := newTestClient(t)
 	values, err := client.GetChartLatestValues(testRepoURL, testChartName)
 	if err != nil {
 		t.Fatalf("GetChartLatestValues() error = %v", err)
@@ -100,7 +115,7 @@ func TestGetChartLatestValues(t *testing.T) {
 }
 
 func TestGetChartContents(t *testing.T) {
-	client := NewClient()
+	client := newTestClient(t)
 
 	// Get the latest version first
 	version, err := client.GetChartLatestVersion(testRepoURL, testChartName)
@@ -133,7 +148,7 @@ func TestGetChartContents(t *testing.T) {
 }
 
 func TestGetChartDependencies(t *testing.T) {
-	client := NewClient()
+	client := newTestClient(t)
 
 	// Get the latest version first
 	version, err := client.GetChartLatestVersion(testRepoURL, testChartName)
@@ -154,7 +169,7 @@ func TestGetChartDependencies(t *testing.T) {
 }
 
 func TestGetChartImages(t *testing.T) {
-	client := NewClient()
+	client := newTestClient(t)
 
 	// Get the latest version first
 	version, err := client.GetChartLatestVersion(testRepoURL, testChartName)
@@ -185,5 +200,146 @@ func TestGetChartImages(t *testing.T) {
 	t.Logf("Found %d images:", len(images))
 	for _, img := range images {
 		t.Logf("  - %s (from %s)", img.FullImage, img.Source)
+	}
+}
+
+func TestIsOCI(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected bool
+	}{
+		{"oci://ghcr.io/org/charts/mychart", true},
+		{"oci://docker.io/library/mysql", true},
+		{"oci://registry.example.com/helm/app:1.0.0", true},
+		{"https://charts.example.com", false},
+		{"http://localhost:8080", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			if got := IsOCI(tt.url); got != tt.expected {
+				t.Errorf("IsOCI(%q) = %v, want %v", tt.url, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseOCIReference(t *testing.T) {
+	tests := []struct {
+		repoURL   string
+		chartName string
+		version   string
+		expected  string
+	}{
+		{"oci://ghcr.io/org/charts", "mychart", "1.0.0", "ghcr.io/org/charts/mychart:1.0.0"},
+		{"oci://ghcr.io/org/charts/mychart", "", "1.0.0", "ghcr.io/org/charts/mychart:1.0.0"},
+		{"oci://ghcr.io/org/charts/mychart", "", "", "ghcr.io/org/charts/mychart"},
+		{"oci://docker.io/library/mysql", "", "8.0", "docker.io/library/mysql:8.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			if got := parseOCIReference(tt.repoURL, tt.chartName, tt.version); got != tt.expected {
+				t.Errorf("parseOCIReference(%q, %q, %q) = %v, want %v", tt.repoURL, tt.chartName, tt.version, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractChartNameFromOCI(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected string
+	}{
+		{"oci://ghcr.io/org/charts/mychart", "mychart"},
+		{"oci://ghcr.io/org/charts/mychart:1.0.0", "mychart"},
+		{"oci://docker.io/library/mysql", "mysql"},
+		{"oci://registry.example.com/app", "app"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			if got := ExtractChartNameFromOCI(tt.url); got != tt.expected {
+				t.Errorf("ExtractChartNameFromOCI(%q) = %v, want %v", tt.url, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestListChartsOCI(t *testing.T) {
+	client := newTestClient(t)
+	charts, err := client.ListCharts(testOCIRepoURL)
+	if err != nil {
+		t.Fatalf("ListCharts() error = %v", err)
+	}
+	if len(charts) == 0 {
+		t.Fatal("ListCharts() returned empty list for OCI")
+	}
+
+	// For OCI, should return the chart name from the URL
+	if charts[0] != "victoria-logs-single" {
+		t.Errorf("ListCharts() = %v, expected [victoria-logs-single]", charts)
+	}
+}
+
+func TestListChartVersionsOCI(t *testing.T) {
+	client := newTestClient(t)
+	versions, err := client.ListChartVersions(testOCIRepoURL, testOCIChartName)
+	if err != nil {
+		t.Fatalf("ListChartVersions() error = %v", err)
+	}
+	if len(versions) == 0 {
+		t.Fatal("ListChartVersions() returned empty list for OCI")
+	}
+	t.Logf("Found %d versions for OCI chart", len(versions))
+}
+
+func TestGetChartLatestVersionOCI(t *testing.T) {
+	client := newTestClient(t)
+	version, err := client.GetChartLatestVersion(testOCIRepoURL, testOCIChartName)
+	if err != nil {
+		t.Fatalf("GetChartLatestVersion() error = %v", err)
+	}
+	if version == "" {
+		t.Fatal("GetChartLatestVersion() returned empty version for OCI")
+	}
+	t.Logf("Latest OCI chart version: %s", version)
+}
+
+func TestGetChartValuesOCI(t *testing.T) {
+	client := newTestClient(t)
+
+	version, err := client.GetChartLatestVersion(testOCIRepoURL, testOCIChartName)
+	if err != nil {
+		t.Fatalf("GetChartLatestVersion() error = %v", err)
+	}
+
+	values, err := client.GetChartValues(testOCIRepoURL, testOCIChartName, version)
+	if err != nil {
+		t.Fatalf("GetChartValues() error = %v", err)
+	}
+	if values == "" {
+		t.Fatal("GetChartValues() returned empty values for OCI")
+	}
+
+	if !strings.Contains(values, ":") {
+		t.Fatal("GetChartValues() did not return expected YAML structure for OCI")
+	}
+}
+
+func TestClientOptions(t *testing.T) {
+	client, err := NewClient(
+		WithPlainHTTP(true),
+		WithBasicAuth("user", "pass"),
+	)
+	if err != nil {
+		t.Fatalf("NewClient() with options error = %v", err)
+	}
+	if client == nil {
+		t.Fatal("NewClient() with options returned nil")
+	}
+	if client.registryClient == nil {
+		t.Fatal("client.registryClient is nil")
 	}
 }

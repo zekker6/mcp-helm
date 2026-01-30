@@ -10,9 +10,9 @@ import (
 	"github.com/zekker6/mcp-helm/lib/helm_client"
 )
 
-func NewGetLatestVersionOfChartTool() mcp.Tool {
-	return mcp.NewTool("get_latest_version_of_chart",
-		mcp.WithDescription("Retrieves the latest version of the chart. For OCI registries, returns the latest semver tag."),
+func NewListChartVersionsTool() mcp.Tool {
+	return mcp.NewTool("list_chart_versions",
+		mcp.WithDescription("Lists all available versions (tags) for a chart. For OCI registries, this lists all tags. For HTTP repositories, lists all versions from the index."),
 		mcp.WithString("repository_url",
 			mcp.Required(),
 			mcp.Description("Helm repository URL. Supports HTTP repos (e.g., https://charts.example.com) and OCI registries (e.g., oci://ghcr.io/org/charts/mychart)"),
@@ -24,7 +24,7 @@ func NewGetLatestVersionOfChartTool() mcp.Tool {
 	)
 }
 
-func GetLatestVersionOfCharHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
+func GetListChartVersionsHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		repositoryURL, err := request.RequireString("repository_url")
 		if err != nil {
@@ -38,11 +38,15 @@ func GetLatestVersionOfCharHandler(c *helm_client.HelmClient) server.ToolHandler
 		}
 		chartName = strings.TrimSpace(chartName)
 
-		version, err := c.GetChartLatestVersion(repositoryURL, chartName)
+		versions, err := c.ListChartVersions(repositoryURL, chartName)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to list charts: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("failed to list chart versions: %v", err)), nil
 		}
 
-		return mcp.NewToolResultText(version), nil
+		if len(versions) == 0 {
+			return mcp.NewToolResultText("No versions found"), nil
+		}
+
+		return mcp.NewToolResultText(strings.Join(versions, ", ")), nil
 	}
 }

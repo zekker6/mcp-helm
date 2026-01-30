@@ -13,14 +13,14 @@ import (
 
 func NewGetChartDependenciesTool() mcp.Tool {
 	return mcp.NewTool("get_chart_dependencies",
-		mcp.WithDescription("Retrieves dependencies for the chart"),
+		mcp.WithDescription("Retrieves dependencies for the chart. Supports both HTTP repositories and OCI registries."),
 		mcp.WithString("repository_url",
 			mcp.Required(),
-			mcp.Description("Helm repository URL"),
+			mcp.Description("Helm repository URL. Supports HTTP repos (e.g., https://charts.example.com) and OCI registries (e.g., oci://ghcr.io/org/charts/mychart)"),
 		),
 		mcp.WithString("chart_name",
 			mcp.Required(),
-			mcp.Description("Chart name"),
+			mcp.Description("Chart name. For OCI URLs that already include the chart name, this can be empty."),
 		),
 		mcp.WithString("chart_version",
 			mcp.Description("Chart version. If omitted the latest version will be used")),

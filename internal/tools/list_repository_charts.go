@@ -12,10 +12,10 @@ import (
 
 func NewListChartsTool() mcp.Tool {
 	return mcp.NewTool("list_repository_charts",
-		mcp.WithDescription("Lists all charts available in the repository"),
+		mcp.WithDescription("Lists all charts available in the repository. For OCI registries, returns the chart name from the reference (OCI repos contain a single chart with multiple version tags)."),
 		mcp.WithString("repository_url",
 			mcp.Required(),
-			mcp.Description("Helm repository URL"),
+			mcp.Description("Helm repository URL. Supports HTTP repos (e.g., https://charts.example.com) and OCI registries (e.g., oci://ghcr.io/org/charts/mychart)"),
 		),
 	)
 }

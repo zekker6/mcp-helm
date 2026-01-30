@@ -4,13 +4,23 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
+	"go.uber.org/zap"
+
 	"github.com/zekker6/mcp-helm/internal/tools"
 	"github.com/zekker6/mcp-helm/lib/helm_client"
 	"github.com/zekker6/mcp-helm/lib/logger"
-	"go.uber.org/zap"
 )
+
+func readPasswordFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read password file: %w", err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
 
 var (
 	version = "dev"
@@ -23,6 +33,18 @@ var (
 	httpListenAddr       = flag.String("httpListenAddr", ":8012", "Address to listen for http connections in sse mode")
 	heartbeatInterval    = flag.Duration("httpHeartbeatInterval", 30, "Interval for sending heartbeat messages in seconds. Only used when -mode=http (default: 30 seconds)")
 	sseKeepAliveInterval = flag.Duration("sseKeepAliveInterval", 30, "Interval for sending keep-alive messages in seconds. Only used when -mode=sse (default: 30 seconds)")
+
+	repoUsername     = flag.String("username", "", "Username for authentication (OCI registries and HTTP repositories)")
+	repoPasswordFile = flag.String("password-file", "", "Path to file containing password for authentication (OCI registries and HTTP repositories)")
+
+	registryCredentials = flag.String("registry-credentials", "", "Path to registry credentials file (e.g., Docker config.json)")
+	registryPlainHTTP   = flag.Bool("registry-plain-http", false, "Use plain HTTP for OCI registry connections (insecure)")
+
+	tlsCertFile           = flag.String("tls-cert", "", "Path to TLS client certificate file for HTTP repositories")
+	tlsKeyFile            = flag.String("tls-key", "", "Path to TLS client key file for HTTP repositories")
+	tlsCAFile             = flag.String("tls-ca", "", "Path to CA certificate file for verifying HTTP repository servers")
+	tlsInsecureSkipVerify = flag.Bool("tls-insecure-skip-verify", false, "Skip TLS certificate verification for HTTP repositories (insecure)")
+	passCredentialsAll    = flag.Bool("pass-credentials-all", false, "Pass credentials to all domains when following redirects")
 )
 
 func main() {
@@ -53,8 +75,9 @@ func main() {
 		server.WithRecovery(),
 	)
 
-	helmClient := helm_client.NewClient()
+	helmClient := getHelmClient()
 	s.AddTool(tools.NewListChartsTool(), tools.GetListChartsHandler(helmClient))
+	s.AddTool(tools.NewListChartVersionsTool(), tools.GetListChartVersionsHandler(helmClient))
 	s.AddTool(tools.NewGetLatestVersionOfChartTool(), tools.GetLatestVersionOfCharHandler(helmClient))
 	s.AddTool(tools.NewGetChartValuesTool(), tools.GetChartValuesHandler(helmClient))
 	s.AddTool(tools.NewGetChartContentsTool(), tools.GetChartContentsHandler(helmClient))
@@ -96,4 +119,64 @@ func main() {
 	default:
 		logger.Error("Unsupported mode specified", zap.String("mode", *mode))
 	}
+}
+
+func getHelmClient() *helm_client.HelmClient {
+	var clientOpts []helm_client.ClientOption
+
+	// Validate auth flags - both must be provided together
+	if (*repoUsername != "") != (*repoPasswordFile != "") {
+		if *repoUsername != "" {
+			logger.Error("Both -username and -password-file must be provided together (missing -password-file)")
+		} else {
+			logger.Error("Both -username and -password-file must be provided together (missing -username)")
+		}
+		os.Exit(1)
+	}
+
+	// Validate TLS client cert flags - both must be provided together
+	if (*tlsCertFile != "") != (*tlsKeyFile != "") {
+		if *tlsCertFile != "" {
+			logger.Error("Both -tls-cert and -tls-key must be provided together (missing -tls-key)")
+		} else {
+			logger.Error("Both -tls-cert and -tls-key must be provided together (missing -tls-cert)")
+		}
+		os.Exit(1)
+	}
+
+	if *repoUsername != "" && *repoPasswordFile != "" {
+		password, err := readPasswordFile(*repoPasswordFile)
+		if err != nil {
+			logger.Error("Failed to read password file", zap.Error(err))
+			os.Exit(1)
+		}
+		clientOpts = append(clientOpts, helm_client.WithBasicAuth(*repoUsername, password))
+	}
+
+	if *registryCredentials != "" {
+		clientOpts = append(clientOpts, helm_client.WithCredentialsFile(*registryCredentials))
+	}
+	if *registryPlainHTTP {
+		clientOpts = append(clientOpts, helm_client.WithPlainHTTP(true))
+	}
+
+	if *tlsCertFile != "" && *tlsKeyFile != "" {
+		clientOpts = append(clientOpts, helm_client.WithTLSClientConfig(*tlsCertFile, *tlsKeyFile))
+	}
+	if *tlsCAFile != "" {
+		clientOpts = append(clientOpts, helm_client.WithCAFile(*tlsCAFile))
+	}
+	if *tlsInsecureSkipVerify {
+		clientOpts = append(clientOpts, helm_client.WithInsecureSkipTLSVerify(true))
+	}
+	if *passCredentialsAll {
+		clientOpts = append(clientOpts, helm_client.WithPassCredentialsAll(true))
+	}
+
+	helmClient, err := helm_client.NewClient(clientOpts...)
+	if err != nil {
+		logger.Error("Failed to create Helm client", zap.Error(err))
+		os.Exit(1)
+	}
+	return helmClient
 }
