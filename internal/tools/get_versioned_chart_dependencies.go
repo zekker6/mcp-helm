@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
 	"github.com/zekker6/mcp-helm/lib/helm_client"
 )
 
@@ -29,27 +29,12 @@ func NewGetChartDependenciesTool() mcp.Tool {
 
 func GetChartDependenciesHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		repositoryURL, err := request.RequireString("repository_url")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		repositoryURL = strings.TrimSpace(repositoryURL)
-
-		chartName, err := request.RequireString("chart_name")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		chartName = strings.TrimSpace(chartName)
-
-		chartVersion := request.GetString("chart_version", "")
-		if chartVersion == "" {
-			chartVersion, err = c.GetChartLatestVersion(repositoryURL, chartName)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("failed to get the latest chart version: %v", err)), nil
-			}
+		params, errResult := ExtractCommonParams(request, c, true)
+		if errResult != nil {
+			return errResult, nil
 		}
 
-		charts, err := c.GetChartDependencies(repositoryURL, chartName, chartVersion)
+		charts, err := c.GetChartDependencies(params.RepositoryURL, params.ChartName, params.ChartVersion)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list charts: %v", err)), nil
 		}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -45,24 +44,9 @@ type chartImagesResult struct {
 
 func GetChartImagesHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		repositoryURL, err := request.RequireString("repository_url")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		repositoryURL = strings.TrimSpace(repositoryURL)
-
-		chartName, err := request.RequireString("chart_name")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		chartName = strings.TrimSpace(chartName)
-
-		chartVersion := request.GetString("chart_version", "")
-		if chartVersion == "" {
-			chartVersion, err = c.GetChartLatestVersion(repositoryURL, chartName)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("failed to get the latest chart version: %v", err)), nil
-			}
+		params, errResult := ExtractCommonParams(request, c, true)
+		if errResult != nil {
+			return errResult, nil
 		}
 
 		recursive := request.GetBool("recursive", false)
@@ -76,14 +60,14 @@ func GetChartImagesHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 			}
 		}
 
-		images, err := c.GetChartImages(repositoryURL, chartName, chartVersion, customValues, recursive)
+		images, err := c.GetChartImages(params.RepositoryURL, params.ChartName, params.ChartVersion, customValues, recursive)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to extract images: %v", err)), nil
 		}
 
 		result := chartImagesResult{
-			Chart:      chartName,
-			Version:    chartVersion,
+			Chart:      params.ChartName,
+			Version:    params.ChartVersion,
 			ImageCount: len(images),
 			Images:     images,
 		}

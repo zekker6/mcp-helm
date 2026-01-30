@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -26,19 +25,12 @@ func NewGetLatestVersionOfChartTool() mcp.Tool {
 
 func GetLatestVersionOfCharHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		repositoryURL, err := request.RequireString("repository_url")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+		params, errResult := ExtractCommonParams(request, c, false)
+		if errResult != nil {
+			return errResult, nil
 		}
-		repositoryURL = strings.TrimSpace(repositoryURL)
 
-		chartName, err := request.RequireString("chart_name")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		chartName = strings.TrimSpace(chartName)
-
-		version, err := c.GetChartLatestVersion(repositoryURL, chartName)
+		version, err := c.GetChartLatestVersion(params.RepositoryURL, params.ChartName)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list charts: %v", err)), nil
 		}
