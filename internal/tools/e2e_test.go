@@ -24,6 +24,10 @@ const (
 func getBinaryPath(t *testing.T) string {
 	t.Helper()
 
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
 	path := "../../tmp/mcp-helm"
 	absPath, err := filepath.Abs(path)
 	if err != nil {
