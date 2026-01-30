@@ -16,7 +16,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
 
       - name: Install mise
         uses: jdx/mise-action@v3
@@ -29,3 +29,6 @@ jobs:
 
       - name: Run build
         run: task build
+
+      - name: Run e2e tests
+        run: task test:e2e

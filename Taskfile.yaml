@@ -31,6 +31,20 @@ tasks:
 
   test:
     cmds:
+      - go test -short ./...
+
+  test:e2e:
+    desc: Run end-to-end tests (builds binary first)
+    deps:
+      - build
+    cmds:
+      - go test -v -run TestE2E ./internal/tools/...
+
+  test:all:
+    desc: Run all tests (unit + e2e)
+    deps:
+      - build
+    cmds:
       - go test ./...
 
   build:
