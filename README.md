@@ -60,7 +60,7 @@ You can run the MCP Helm server using Docker. This is the easiest way to get sta
 build from source.
 
 ```bash
-docker run -d --name mcp-helm -p 8012:8012 ghcr.io/zekker6/mcp-helm:v1.0.6 -mode=sse
+docker run -d --name mcp-helm -p 8012:8012 ghcr.io/zekker6/mcp-helm:v1.3.0 -mode=sse
 ```
 
 Note that the `--mode=sse` flag is used to enable Server-Sent Events mode, which used by MCP clients to connect.
@@ -195,13 +195,13 @@ Example with Docker, passing authentication:
 # With basic auth
 docker run -d --name mcp-helm -p 8012:8012 \
   -v /path/to/password.txt:/secrets/password.txt:ro \
-  ghcr.io/zekker6/mcp-helm:latest \
+  ghcr.io/zekker6/mcp-helm:v1.3.0 \
   -mode=sse -username myuser -password-file /secrets/password.txt
 
 # With Docker credentials
 docker run -d --name mcp-helm -p 8012:8012 \
   -v ~/.docker/config.json:/root/.docker/config.json:ro \
-  ghcr.io/zekker6/mcp-helm:latest \
+  ghcr.io/zekker6/mcp-helm:v1.3.0 \
   -mode=sse
 ```
 
