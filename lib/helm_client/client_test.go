@@ -29,8 +29,7 @@ func TestNewClient(t *testing.T) {
 	}
 	if client == nil {
 		t.Fatal("NewClient() returned nil")
-	}
-	if client.settings == nil {
+	} else if client.settings == nil {
 		t.Fatal("client.settings is nil")
 	}
 }
@@ -338,8 +337,7 @@ func TestClientOptions(t *testing.T) {
 	}
 	if client == nil {
 		t.Fatal("NewClient() with options returned nil")
-	}
-	if client.registryClient == nil {
+	} else if client.registryClient == nil {
 		t.Fatal("client.registryClient is nil")
 	}
 }
