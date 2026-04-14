@@ -1,7 +1,7 @@
 [tools]
 act = "0.2.87"
-goreleaser = "2.13.3"
-task = "3.48.0"
+goreleaser = "2.15.2"
+task = "3.50.0"
 golangci-lint = "2.11.4"
 "ubi:air-verse/air" = "1.65.1"
 node = "25"
