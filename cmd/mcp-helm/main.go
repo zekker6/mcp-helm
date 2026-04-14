@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 	"go.uber.org/zap"
@@ -31,8 +32,8 @@ var (
 var (
 	mode                 = flag.String("mode", "stdio", "Mode to run the MCP server in (stdio, sse, http)")
 	httpListenAddr       = flag.String("httpListenAddr", ":8012", "Address to listen for http connections in sse mode")
-	heartbeatInterval    = flag.Duration("httpHeartbeatInterval", 30, "Interval for sending heartbeat messages in seconds. Only used when -mode=http (default: 30 seconds)")
-	sseKeepAliveInterval = flag.Duration("sseKeepAliveInterval", 30, "Interval for sending keep-alive messages in seconds. Only used when -mode=sse (default: 30 seconds)")
+	heartbeatInterval    = flag.Duration("httpHeartbeatInterval", 30*time.Second, "Interval for sending heartbeat messages in seconds. Only used when -mode=http")
+	sseKeepAliveInterval = flag.Duration("sseKeepAliveInterval", 30*time.Second, "Interval for sending keep-alive messages in seconds. Only used when -mode=sse")
 
 	repoUsername     = flag.String("username", "", "Username for authentication (OCI registries and HTTP repositories)")
 	repoPasswordFile = flag.String("password-file", "", "Path to file containing password for authentication (OCI registries and HTTP repositories)")
