@@ -127,9 +127,9 @@ The server supports authentication for both OCI registries and HTTP Helm reposit
 
 | Flag                        | Description                                                           |
 |-----------------------------|-----------------------------------------------------------------------|
-| `-username`                 | Username for authentication (works for both OCI and HTTP repos)       |
-| `-password-file`            | Path to file containing password)                                     |
-| `-registry-credentials`     | Path to Docker-style credentials file (e.g., `~/.docker/config.json`) |
+| `-username`                 | Username for basic authentication (HTTP repos, and OCI registries not covered by `-registry-credentials`) |
+| `-password-file`            | Path to file containing password                                      |
+| `-registry-credentials`     | Path to Docker-style credentials file (e.g., `~/.docker/config.json`); authoritative for the OCI registries it lists |
 | `-registry-plain-http`      | Use plain HTTP for OCI registries (insecure, for development only)    |
 | `-tls-cert`                 | Path to TLS client certificate file for HTTP repositories             |
 | `-tls-key`                  | Path to TLS client key file for HTTP repositories                     |
@@ -168,6 +168,37 @@ echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
 # Using basic auth for OCI registry
 ./mcp-helm -username myuser -password-file /path/to/password.txt
 ```
+
+##### Combining basic auth with a registry credentials file
+
+A single instance can serve private HTTP repositories and private OCI registries
+at the same time. When both `-username/-password-file` and `-registry-credentials`
+are set, OCI requests are routed per registry host:
+
+- If the credentials file resolves a credential for the chart's registry host,
+  that per-host credential is used (`auths`, `credHelpers`, and `credsStore` are
+  all consulted, using the same Docker credential resolution as the Helm CLI, so
+  Docker Hub's canonical `https://index.docker.io/v1/` key is matched correctly).
+- Otherwise, the static `-username/-password-file` basic auth is used.
+
+This lets `-registry-credentials` stay authoritative for the OCI registries it
+covers while basic auth still applies to HTTP repositories (and any OCI registry
+the credentials file does not resolve).
+
+```bash
+# HTTP repos use basic auth; OCI hosts in config.json use their per-host creds
+./mcp-helm \
+  -username myuser -password-file /path/to/password.txt \
+  -registry-credentials /path/to/docker/config.json
+```
+
+Credentials behind an external credential store (`credsStore`) or per-registry
+helper (`credHelpers`) are resolved by invoking that helper binary at runtime.
+If the helper is not available in the runtime environment, the affected
+registries fall back to basic auth; a warning is logged at startup so this is
+visible. Routing considers only the file passed to `-registry-credentials` (no
+implicit `~/.docker/config.json` fallback), so list every private OCI registry
+you need in that file.
 
 #### TLS/mTLS Configuration
 
