@@ -291,9 +291,9 @@ func newCredStore(path string) (credentials.Store, error) {
 	return credentials.NewStore(path, credentials.StoreOptions{})
 }
 
-// externalCredHelpers reports the credential store and per-registry credential
-// helpers declared in a Docker-style credentials file. Credentials behind these
-// can only be resolved by invoking the helper binary at runtime.
+// externalCredHelpers reports the credential store and the registry hosts that have
+// per-registry credential helpers declared in a Docker-style credentials file.
+// Credentials behind these can only be resolved by invoking the helper binary at runtime.
 func externalCredHelpers(path string) (credsStore string, credHelpers []string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
