@@ -2,6 +2,8 @@ package helm_client
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"go.uber.org/zap"
 	"helm.sh/helm/v4/pkg/chart/loader"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/cli"
@@ -18,8 +21,11 @@ import (
 	"helm.sh/helm/v4/pkg/getter"
 	"helm.sh/helm/v4/pkg/registry"
 	"helm.sh/helm/v4/pkg/repo/v1"
+	"oras.land/oras-go/v2/registry/remote/auth"
+	"oras.land/oras-go/v2/registry/remote/credentials"
 
 	"github.com/zekker6/mcp-helm/lib/helm_parser"
+	"github.com/zekker6/mcp-helm/lib/logger"
 )
 
 var (
@@ -98,9 +104,26 @@ func WithPassCredentialsAll(pass bool) ClientOption {
 }
 
 type HelmClient struct {
-	settings       *cli.EnvSettings
+	settings *cli.EnvSettings
+
+	// registryClient is the default OCI registry client. When basic auth is
+	// configured (and no explicit credentials file resolves a credential for
+	// the target host) it carries those static credentials.
 	registryClient *registry.Client
-	options        *clientOptions
+	// registryClientCreds is non-nil only when both basic auth and an explicit
+	// credentials file are configured. It is used for OCI hosts the credentials
+	// file resolves a credential for, so docker-config lookups take precedence
+	// over static basic auth.
+	registryClientCreds *registry.Client
+	// credStore resolves credentials from the explicit credentials file using
+	// the same store and semantics as the OCI registry client. Non-nil only in
+	// the combined basic-auth + credentials-file mode; used to route per host.
+	credStore credentials.Store
+
+	routeMu    sync.Mutex
+	routeCache map[string]*registry.Client
+
+	options *clientOptions
 
 	reposMu sync.Mutex
 	repos   map[string]*repo.ChartRepository
@@ -109,9 +132,15 @@ type HelmClient struct {
 // NewClient creates a new HelmClient with optional configuration.
 // It supports both HTTP Helm repositories and OCI registries.
 //
-// Authentication for registries can be configured via:
-//   - WithCredentialsFile: path to Docker-style credentials file
-//   - WithBasicAuth: username/password authentication
+// Authentication for OCI registries can be configured via:
+//   - WithCredentialsFile: path to a Docker-style credentials file (per-host lookup)
+//   - WithBasicAuth: static username/password
+//
+// When both are provided, OCI requests are routed per host: registries the
+// credentials file resolves a credential for use the credentials-file client,
+// and every other registry falls back to the static basic-auth client. HTTP
+// repositories always use the basic-auth credentials (scoped per repository in
+// getRepo).
 func NewClient(opts ...ClientOption) (*HelmClient, error) {
 	options := &clientOptions{}
 	for _, opt := range opts {
@@ -123,33 +152,177 @@ func NewClient(opts ...ClientOption) (*HelmClient, error) {
 	settings.RegistryConfig = path.Join(tmpDir, "helm-registry.conf")
 	settings.RepositoryConfig = path.Join(tmpDir, "helm-repository.conf")
 
-	var regOpts []registry.ClientOption
-	regOpts = append(regOpts, registry.ClientOptEnableCache(true))
-
-	if options.credentialsFile != "" {
-		regOpts = append(regOpts, registry.ClientOptCredentialsFile(options.credentialsFile))
-	} else if settings.RegistryConfig != "" {
-		regOpts = append(regOpts, registry.ClientOptCredentialsFile(settings.RegistryConfig))
-	}
-
-	if options.username != "" && options.password != "" {
-		regOpts = append(regOpts, registry.ClientOptBasicAuth(options.username, options.password))
-	}
-
+	baseOpts := []registry.ClientOption{registry.ClientOptEnableCache(true)}
 	if options.plainHTTP {
-		regOpts = append(regOpts, registry.ClientOptPlainHTTP())
+		baseOpts = append(baseOpts, registry.ClientOptPlainHTTP())
+	}
+
+	hasBasicAuth := options.username != "" && options.password != ""
+	hasCredsFile := options.credentialsFile != ""
+
+	client := &HelmClient{
+		settings: settings,
+		options:  options,
+	}
+
+	if hasBasicAuth && hasCredsFile {
+		// Both auth methods configured: route OCI requests per host. A host is
+		// resolved against the credentials file using the same store the
+		// registry client uses; if the file yields a credential the
+		// credentials-file client is used, otherwise the request falls back to
+		// the static basic-auth client.
+		credStore, err := newCredStore(options.credentialsFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load registry credentials file %q: %w", options.credentialsFile, err)
+		}
+
+		credsClient, err := registry.NewClient(withRegistryOpts(baseOpts,
+			registry.ClientOptCredentialsFile(options.credentialsFile))...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create OCI registry client (credentials file): %w", err)
+		}
+
+		basicClient, err := registry.NewClient(withRegistryOpts(baseOpts,
+			registry.ClientOptCredentialsFile(settings.RegistryConfig),
+			registry.ClientOptBasicAuth(options.username, options.password))...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create OCI registry client (basic auth): %w", err)
+		}
+
+		client.registryClient = basicClient
+		client.registryClientCreds = credsClient
+		client.credStore = credStore
+		client.routeCache = make(map[string]*registry.Client)
+
+		// Credentials resolved through an external credential store/helper can
+		// only be detected at runtime by invoking that helper. Warn so the
+		// silent fallback to basic auth is visible if the helper is unavailable.
+		if store, helpers := externalCredHelpers(options.credentialsFile); store != "" || len(helpers) > 0 {
+			logger.Warn("registry credentials file relies on external credential helpers; affected OCI registries require the helper binary at runtime, otherwise they fall back to -username/-password basic auth",
+				zap.String("credentialsFile", options.credentialsFile),
+				zap.String("credsStore", store),
+				zap.Strings("credHelpers", helpers),
+			)
+		}
+
+		return client, nil
+	}
+
+	// Single client: explicit credentials file if provided, otherwise the
+	// default registry config, optionally augmented with static basic auth.
+	credsFile := settings.RegistryConfig
+	if hasCredsFile {
+		credsFile = options.credentialsFile
+	}
+	regOpts := withRegistryOpts(baseOpts, registry.ClientOptCredentialsFile(credsFile))
+	if hasBasicAuth {
+		regOpts = append(regOpts, registry.ClientOptBasicAuth(options.username, options.password))
 	}
 
 	regClient, err := registry.NewClient(regOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create registry client: %v", err)
+		return nil, fmt.Errorf("failed to create registry client: %w", err)
+	}
+	client.registryClient = regClient
+
+	return client, nil
+}
+
+// withRegistryOpts returns a fresh slice combining base and extra registry
+// client options without mutating base's backing array.
+func withRegistryOpts(base []registry.ClientOption, extra ...registry.ClientOption) []registry.ClientOption {
+	out := make([]registry.ClientOption, 0, len(base)+len(extra))
+	out = append(out, base...)
+	out = append(out, extra...)
+	return out
+}
+
+// registryClientFor returns the OCI registry client to use for repoURL. When
+// both basic auth and an explicit credentials file are configured, a host that
+// resolves to a credential in the credentials file uses the credentials-file
+// client; everything else uses the basic-auth client. The resolution mirrors
+// the registry client's own credential lookup (oras-go store + Docker Hub key
+// mapping), so the routing decision matches what the chosen client will use.
+func (c *HelmClient) registryClientFor(repoURL string) *registry.Client {
+	if c.credStore == nil {
+		return c.registryClient
 	}
 
-	return &HelmClient{
-		settings:       settings,
-		registryClient: regClient,
-		options:        options,
-	}, nil
+	host := ociRegistryHost(repoURL)
+
+	c.routeMu.Lock()
+	cl, ok := c.routeCache[host]
+	c.routeMu.Unlock()
+	if ok {
+		return cl
+	}
+
+	// Resolve outside the lock: for a credsStore/credHelpers config this execs
+	// an external helper binary, which must not block routing for other hosts.
+	// A concurrent first lookup of the same host may resolve twice, but the
+	// result is deterministic, so caching either is safe.
+	cl = c.registryClient
+	// Same key derivation helm's registry client uses for credential lookup.
+	key := credentials.ServerAddressFromHostname(credentials.ServerAddressFromRegistry(host))
+	if cred, err := c.credStore.Get(context.Background(), key); err == nil && cred != auth.EmptyCredential {
+		cl = c.registryClientCreds
+	}
+
+	c.routeMu.Lock()
+	c.routeCache[host] = cl
+	c.routeMu.Unlock()
+	return cl
+}
+
+// newCredStore builds an oras-go credentials store from a Docker-style
+// credentials file, using the same store and key semantics as the
+// credentials-file registry client. Only the provided file is consulted (no
+// ~/.docker fallback and no native-store auto-detection): routing stays
+// deterministic and scoped to the credentials the user explicitly supplied, and
+// the store it resolves is a subset of what that registry client resolves, so a
+// host routed to the credentials-file client is guaranteed to resolve there.
+// credsStore/credHelpers declared in the file are still honored.
+func newCredStore(path string) (credentials.Store, error) {
+	// Fail fast on a missing/unreadable file: the store loader silently treats
+	// a missing file as empty, which would hide a misconfigured path.
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	}
+	return credentials.NewStore(path, credentials.StoreOptions{})
+}
+
+// externalCredHelpers reports the credential store and the registry hosts that have
+// per-registry credential helpers declared in a Docker-style credentials file.
+// Credentials behind these can only be resolved by invoking the helper binary at runtime.
+func externalCredHelpers(path string) (credsStore string, credHelpers []string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil
+	}
+
+	var cfg struct {
+		CredsStore  string            `json:"credsStore"`
+		CredHelpers map[string]string `json:"credHelpers"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", nil
+	}
+
+	for host := range cfg.CredHelpers {
+		credHelpers = append(credHelpers, host)
+	}
+	sort.Strings(credHelpers)
+	return cfg.CredsStore, credHelpers
+}
+
+// ociRegistryHost extracts the registry host from an OCI URL,
+// e.g. "oci://registry.example.com/org/chart" -> "registry.example.com".
+func ociRegistryHost(repoURL string) string {
+	ref := strings.TrimPrefix(repoURL, "oci://")
+	if i := strings.IndexByte(ref, '/'); i != -1 {
+		ref = ref[:i]
+	}
+	return ref
 }
 
 func IsOCI(url string) bool {
@@ -287,7 +460,7 @@ func (c *HelmClient) ListCharts(repoURL string) ([]string, error) {
 func (c *HelmClient) ListChartVersions(repoURL string, chart string) ([]string, error) {
 	if IsOCI(repoURL) {
 		ref := parseOCIReference(repoURL, chart, "")
-		tags, err := c.registryClient.Tags(ref)
+		tags, err := c.registryClientFor(repoURL).Tags(ref)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list tags for OCI chart %s: %v", ref, err)
 		}
@@ -361,7 +534,7 @@ func (c *HelmClient) loadChart(repoURL string, chartName string, version string)
 func (c *HelmClient) loadChartFromOCI(repoURL, chartName, version string) (*chartv2.Chart, error) {
 	ref := parseOCIReference(repoURL, chartName, version)
 
-	result, err := c.registryClient.Pull(ref, registry.PullOptWithChart(true))
+	result, err := c.registryClientFor(repoURL).Pull(ref, registry.PullOptWithChart(true))
 	if err != nil {
 		return nil, fmt.Errorf("failed to pull OCI chart %s: %v", ref, err)
 	}
@@ -464,7 +637,7 @@ func (c *HelmClient) loadChartFromHTTP(repoURL, chartName, version string) (*cha
 func (c *HelmClient) GetChartLatestVersion(repoURL, chartName string) (string, error) {
 	if IsOCI(repoURL) {
 		ref := parseOCIReference(repoURL, chartName, "")
-		tags, err := c.registryClient.Tags(ref)
+		tags, err := c.registryClientFor(repoURL).Tags(ref)
 		if err != nil {
 			return "", fmt.Errorf("failed to list tags for OCI chart %s: %v", ref, err)
 		}

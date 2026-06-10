@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -213,6 +215,169 @@ func TestCredentialsFile(t *testing.T) {
 	}
 	if receivedPass != validPass {
 		t.Errorf("expected password %q, got %q", validPass, receivedPass)
+	}
+}
+
+func writeDockerConfig(t *testing.T, hosts ...string) string {
+	t.Helper()
+
+	auths := make(map[string]map[string]string, len(hosts))
+	for _, h := range hosts {
+		auths[h] = map[string]string{"auth": "dXNlcjpwYXNz"} // user:pass
+	}
+	return writeDockerConfigRaw(t, map[string]any{"auths": auths})
+}
+
+func writeDockerConfigRaw(t *testing.T, cfg map[string]any) string {
+	t.Helper()
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal docker config: %v", err)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write docker config: %v", err)
+	}
+	return path
+}
+
+func TestOCIRegistryRouting(t *testing.T) {
+	t.Run("resolvable host uses creds client, others fall back to basic auth", func(t *testing.T) {
+		// Docker Hub is stored under its canonical key, as `docker login` writes it.
+		cfgPath := writeDockerConfig(t, "registry.example.com", "https://index.docker.io/v1/")
+
+		client, err := NewClient(
+			WithBasicAuth("user", "pass"),
+			WithCredentialsFile(cfgPath),
+		)
+		if err != nil {
+			t.Fatalf("NewClient() error = %v", err)
+		}
+
+		if client.registryClientCreds == nil {
+			t.Fatal("expected a dedicated credentials-file registry client when both auth methods are set")
+		}
+		if client.registryClient == nil {
+			t.Fatal("expected a basic-auth registry client")
+		}
+
+		cases := []struct {
+			repoURL  string
+			wantCred bool
+		}{
+			{"oci://registry.example.com/org/chart", true},
+			{"oci://docker.io/library/mysql", true},            // canonical Docker Hub key resolves
+			{"oci://registry-1.docker.io/library/redis", true}, // maps to the same canonical key
+			{"oci://ghcr.io/org/chart", false},                 // not in creds file -> basic auth
+		}
+		for _, tc := range cases {
+			got := client.registryClientFor(tc.repoURL)
+			if tc.wantCred && got != client.registryClientCreds {
+				t.Errorf("%s: expected credentials-file client", tc.repoURL)
+			}
+			if !tc.wantCred && got != client.registryClient {
+				t.Errorf("%s: expected basic-auth fallback client", tc.repoURL)
+			}
+		}
+	})
+
+	t.Run("non-canonical docker.io key does not falsely route to creds client", func(t *testing.T) {
+		// A bare "docker.io" auths key is not the key ORAS resolves for Docker
+		// Hub (it looks up https://index.docker.io/v1/), so it must not suppress
+		// the basic-auth fallback. Regression guard for issue #135 finding 2.
+		cfgPath := writeDockerConfig(t, "docker.io")
+
+		client, err := NewClient(
+			WithBasicAuth("user", "pass"),
+			WithCredentialsFile(cfgPath),
+		)
+		if err != nil {
+			t.Fatalf("NewClient() error = %v", err)
+		}
+
+		if got := client.registryClientFor("oci://docker.io/library/mysql"); got != client.registryClient {
+			t.Error("expected basic-auth fallback for a non-resolvable bare docker.io key")
+		}
+	})
+
+	t.Run("credsStore config falls back gracefully when helper is unavailable", func(t *testing.T) {
+		// A credsStore config can only be resolved by invoking its helper binary.
+		// When that binary is absent, routing must fall back to basic auth rather
+		// than error. Regression guard for issue #135 finding 1.
+		cfgPath := writeDockerConfigRaw(t, map[string]any{"credsStore": "mcphelmtestnohelper"})
+
+		client, err := NewClient(
+			WithBasicAuth("user", "pass"),
+			WithCredentialsFile(cfgPath),
+		)
+		if err != nil {
+			t.Fatalf("NewClient() error = %v", err)
+		}
+
+		if got := client.registryClientFor("oci://registry.invalid.test/org/chart"); got != client.registryClient {
+			t.Error("expected basic-auth fallback when the credential helper is unavailable")
+		}
+	})
+
+	t.Run("only basic auth: single client for all hosts", func(t *testing.T) {
+		client, err := NewClient(WithBasicAuth("user", "pass"))
+		if err != nil {
+			t.Fatalf("NewClient() error = %v", err)
+		}
+		if client.registryClientCreds != nil {
+			t.Error("did not expect a separate credentials-file client without -registry-credentials")
+		}
+		if client.registryClientFor("oci://any.example.com/org/chart") != client.registryClient {
+			t.Error("expected the single registry client for all hosts")
+		}
+	})
+
+	t.Run("only creds file: single client for all hosts", func(t *testing.T) {
+		cfgPath := writeDockerConfig(t, "registry.example.com")
+
+		client, err := NewClient(WithCredentialsFile(cfgPath))
+		if err != nil {
+			t.Fatalf("NewClient() error = %v", err)
+		}
+		if client.registryClientCreds != nil {
+			t.Error("did not expect routing without basic auth")
+		}
+		if client.registryClientFor("oci://registry.example.com/org/chart") != client.registryClient {
+			t.Error("expected the single registry client for all hosts")
+		}
+	})
+}
+
+func TestOCIRegistryHost(t *testing.T) {
+	cases := map[string]string{
+		"oci://registry.example.com/org/chart":      "registry.example.com",
+		"oci://registry.example.com:5000/org/chart": "registry.example.com:5000",
+		"oci://docker.io/library/mysql":             "docker.io",
+		"oci://ghcr.io/org/chart":                   "ghcr.io",
+	}
+	for in, want := range cases {
+		if got := ociRegistryHost(in); got != want {
+			t.Errorf("ociRegistryHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestExternalCredHelpers(t *testing.T) {
+	cfgPath := writeDockerConfigRaw(t, map[string]any{
+		"credsStore":  "osxkeychain",
+		"credHelpers": map[string]string{"gcr.io": "gcloud", "public.ecr.aws": "ecr-login"},
+	})
+
+	store, helpers := externalCredHelpers(cfgPath)
+	if store != "osxkeychain" {
+		t.Errorf("credsStore = %q, want osxkeychain", store)
+	}
+	want := []string{"gcr.io", "public.ecr.aws"}
+	if len(helpers) != len(want) || helpers[0] != want[0] || helpers[1] != want[1] {
+		t.Errorf("credHelpers = %v, want %v", helpers, want)
 	}
 }
 
