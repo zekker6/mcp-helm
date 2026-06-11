@@ -602,13 +602,29 @@ func (c *HelmClient) loadChartFromHTTP(repoURL, chartName, version string) (*cha
 	chartPath := filepath.Join(tempDir, fmt.Sprintf("%s-%s", chartName, version))
 	_ = os.MkdirAll(chartPath, 0755)
 
+	// Forward the same auth options getRepo applies to the index download.
+	// The Helm SDK's ChartDownloader does not auto-discover credentials from
+	// the repo.Entry, so they must be passed explicitly here; otherwise the
+	// .tgz fetch from a private repository goes out unauthenticated even though
+	// the index download was authenticated. Empty values are no-ops, so this is
+	// safe for public repositories.
+	downloadOpts := []getter.Option{
+		getter.WithURL(helmRepo.Config.URL), // Pass repo URL for context if needed by getters
+	}
+	if c.options != nil {
+		downloadOpts = append(downloadOpts,
+			getter.WithBasicAuth(c.options.username, c.options.password),
+			getter.WithTLSClientConfig(c.options.certFile, c.options.keyFile, c.options.caFile),
+			getter.WithInsecureSkipVerifyTLS(c.options.insecureSkipTLSVerify),
+			getter.WithPassCredentialsAll(c.options.passCredentialsAll),
+		)
+	}
+
 	dl := downloader.ChartDownloader{
-		Out:     io.Discard,
-		Keyring: "",
-		Getters: getter.All(c.settings),
-		Options: []getter.Option{
-			getter.WithURL(helmRepo.Config.URL), // Pass repo URL for context if needed by getters
-		},
+		Out:              io.Discard,
+		Keyring:          "",
+		Getters:          getter.All(c.settings),
+		Options:          downloadOpts,
 		RepositoryConfig: c.settings.RepositoryConfig,
 		RepositoryCache:  c.settings.RepositoryCache,
 		ContentCache:     c.settings.ContentCache,
