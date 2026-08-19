@@ -5,6 +5,6 @@ task = "3.53.1"
 golangci-lint = "2.12.2"
 "ubi:air-verse/air" = "1.67.4"
 node = "25"
-"npm:@modelcontextprotocol/inspector" = { version = "2.2.0", trust_policy_excludes = [
+"npm:@modelcontextprotocol/inspector" = { version = "2.3.0", trust_policy_excludes = [
   "pino@9.14.0",
 ] }
