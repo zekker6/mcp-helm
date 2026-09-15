@@ -246,6 +246,43 @@ func TestE2E_GetChartContents(t *testing.T) {
 	}
 }
 
+func TestE2E_GetChartContents_Paths(t *testing.T) {
+	c := newTestClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	result, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "get_chart_contents",
+			Arguments: map[string]any{
+				"repository_url": testRepoURL,
+				"chart_name":     testChartName,
+				"paths":          []string{"Chart.yaml", "templates/**"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool failed: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("tool returned error: %v", result.Content)
+	}
+
+	content := getTextContent(t, result)
+	var contents string
+	if err := json.Unmarshal([]byte(content), &contents); err != nil {
+		t.Fatalf("expected JSON string, got error: %v\ncontent: %s", err, truncate(content, 500))
+	}
+	for _, want := range []string{"# file: " + testChartName + "/Chart.yaml\n", "# file: " + testChartName + "/templates/"} {
+		if !strings.Contains(contents, want) {
+			t.Errorf("expected contents to include %q\ncontent: %s", want, truncate(contents, 500))
+		}
+	}
+	if strings.Contains(contents, "# file: "+testChartName+"/values.yaml\n") {
+		t.Errorf("expected values.yaml to be filtered out\ncontent: %s", truncate(contents, 500))
+	}
+}
+
 func TestE2E_GetChartImages(t *testing.T) {
 	c := newTestClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

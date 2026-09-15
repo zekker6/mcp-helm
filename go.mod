@@ -3,6 +3,7 @@ module github.com/zekker6/mcp-helm
 go 1.27.0
 
 require (
+	github.com/gobwas/glob v1.0.0
 	github.com/mark3labs/mcp-go v1.0.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
@@ -44,7 +45,6 @@ require (
 	github.com/go-openapi/swag/stringutils v0.29.2 // indirect
 	github.com/go-openapi/swag/typeutils v0.29.2 // indirect
 	github.com/go-openapi/swag/yamlutils v0.29.2 // indirect
-	github.com/gobwas/glob v1.0.0 // indirect
 	github.com/gofrs/flock v0.13.1 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect

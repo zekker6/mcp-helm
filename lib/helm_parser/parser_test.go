@@ -104,7 +104,7 @@ func TestGetChartContents(t *testing.T) {
 	mockChart := createMockChart()
 
 	// Test without recursion
-	contents, err := GetChartContents(mockChart, false)
+	contents, err := GetChartContents(mockChart, false, nil)
 	if err != nil {
 		t.Fatalf("GetChartContents(recursive=false) error = %v", err)
 	}
@@ -135,7 +135,7 @@ func TestGetChartContents(t *testing.T) {
 	mockChart.AddDependency(mockSubchart)
 
 	// Test with recursion
-	contentsRecursive, err := GetChartContents(mockChart, true)
+	contentsRecursive, err := GetChartContents(mockChart, true, nil)
 	if err != nil {
 		t.Fatalf("GetChartContents(recursive=true) error = %v", err)
 	}
@@ -154,6 +154,85 @@ func TestGetChartContents(t *testing.T) {
 	}
 	if !strings.Contains(contentsRecursive, "# file: subchart/values.yaml\n") {
 		t.Fatal("Recursive contents should include subchart values.yaml")
+	}
+}
+
+func TestGetChartContentsPaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		paths     []string
+		recursive bool
+		want      []string
+		notWant   []string
+	}{
+		{
+			name:    "exact file",
+			paths:   []string{"Chart.yaml"},
+			want:    []string{"# file: test-chart/Chart.yaml\n"},
+			notWant: []string{"# file: test-chart/values.yaml\n", "# file: test-chart/templates/", "# file: test-chart/README.md\n"},
+		},
+		{
+			name:    "double star crosses directories",
+			paths:   []string{"templates/**"},
+			want:    []string{"# file: test-chart/templates/deployment.yaml\n", "# file: test-chart/templates/backend/service.yaml\n"},
+			notWant: []string{"# file: test-chart/Chart.yaml\n"},
+		},
+		{
+			name:    "single star stops at directory separator",
+			paths:   []string{"templates/*.yaml"},
+			want:    []string{"# file: test-chart/templates/deployment.yaml\n"},
+			notWant: []string{"# file: test-chart/templates/backend/service.yaml\n"},
+		},
+		{
+			name:    "any of multiple patterns",
+			paths:   []string{"Chart.yaml", "README.md"},
+			want:    []string{"# file: test-chart/Chart.yaml\n", "# file: test-chart/README.md\n"},
+			notWant: []string{"# file: test-chart/values.yaml\n"},
+		},
+		{
+			name:      "recursive matches paths inside subcharts",
+			paths:     []string{"values.yaml"},
+			recursive: true,
+			want:      []string{"# file: test-chart/values.yaml\n", "# Subchart: subchart\n", "# file: subchart/values.yaml\n"},
+			notWant:   []string{"Chart.yaml\n"},
+		},
+		{
+			name:      "no match returns empty contents",
+			paths:     []string{"missing/**"},
+			recursive: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := createMockChart()
+			c.Raw = append(c.Raw, &common.File{Name: "templates/backend/service.yaml", Data: []byte("kind: Service\n")})
+			c.AddDependency(createMockSubchart())
+
+			contents, err := GetChartContents(c, tt.recursive, tt.paths)
+			if err != nil {
+				t.Fatalf("GetChartContents() error = %v", err)
+			}
+			if len(tt.want) == 0 && contents != "" {
+				t.Fatalf("GetChartContents() = %q, want empty", contents)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(contents, want) {
+					t.Errorf("GetChartContents() output missing %q\n%s", want, contents)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(contents, notWant) {
+					t.Errorf("GetChartContents() output should not contain %q\n%s", notWant, contents)
+				}
+			}
+		})
+	}
+}
+
+func TestGetChartContentsInvalidPath(t *testing.T) {
+	if _, err := GetChartContents(createMockChart(), false, []string{"["}); err == nil {
+		t.Fatal("GetChartContents() expected error for invalid pattern")
 	}
 }
 

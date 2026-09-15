@@ -27,6 +27,10 @@ func NewGetChartContentsTool() mcp.Tool {
 		mcp.WithBoolean("recursive",
 			mcp.Description("If true, retrieves all files in the chart recursively. Defaults to false"),
 		),
+		mcp.WithArray("paths",
+			mcp.WithStringItems(),
+			mcp.Description("Glob patterns matched against file paths inside the chart and, when recursive, inside each subchart (e.g. [\"Chart.yaml\", \"templates/**\"]). `*` does not cross `/`, `**` does. If omitted, all files are returned"),
+		),
 	)
 }
 
@@ -38,8 +42,9 @@ func GetChartContentsHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 		}
 
 		recursive := request.GetBool("recursive", false)
+		paths := request.GetStringSlice("paths", nil)
 
-		charts, err := c.GetChartContents(params.RepositoryURL, params.ChartName, params.ChartVersion, recursive)
+		charts, err := c.GetChartContents(params.RepositoryURL, params.ChartName, params.ChartVersion, recursive, paths)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list charts: %v", err)), nil
 		}

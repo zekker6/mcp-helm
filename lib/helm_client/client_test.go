@@ -123,7 +123,7 @@ func TestGetChartContents(t *testing.T) {
 	}
 
 	// Test without recursion
-	contents, err := client.GetChartContents(testRepoURL, testChartName, version, false)
+	contents, err := client.GetChartContents(testRepoURL, testChartName, version, false, nil)
 	if err != nil {
 		t.Fatalf("GetChartContents(recursive=false) error = %v", err)
 	}
@@ -132,7 +132,7 @@ func TestGetChartContents(t *testing.T) {
 	}
 
 	// Test with recursion
-	contentsRecursive, err := client.GetChartContents(testRepoURL, testChartName, version, true)
+	contentsRecursive, err := client.GetChartContents(testRepoURL, testChartName, version, true, nil)
 	if err != nil {
 		t.Fatalf("GetChartContents(recursive=true) error = %v", err)
 	}

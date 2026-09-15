@@ -20,7 +20,8 @@ The MCP Helm server provides the following tools:
 - **list_chart_versions** - Lists all available versions/tags for a chart
 - **get_latest_version_of_chart** - Retrieves the latest version of a specific chart
 - **get_chart_values** - Retrieves the values file for a chart (latest version or specific version)
-- **get_chart_contents** - Retrieves the contents of a chart (including templates, values, and metadata)
+- **get_chart_contents** - Retrieves the contents of a chart (including templates, values, and metadata), optionally
+  filtered by file path glob patterns (for example, `templates/**`)
 - **get_chart_dependencies** - Retrieves the dependencies of a chart as defined in its `Chart.yaml` file
 - **get_chart_images** - Extracts container images used in a Helm chart by rendering templates and parsing Kubernetes
   manifests

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gobwas/glob"
 	"gopkg.in/yaml.v2"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 )
@@ -67,12 +68,26 @@ func GetChartDependencies(chart *chartv2.Chart) ([]string, error) {
 	return dependencies, nil
 }
 
-func GetChartContents(c *chartv2.Chart, recursive bool) (string, error) {
+// GetChartContents returns the chart files whose path inside the chart matches any of paths
+// (gobwas/glob syntax, `*` stops at `/`, `**` does not). Empty paths returns all files.
+func GetChartContents(c *chartv2.Chart, recursive bool, paths []string) (string, error) {
+	patterns := make([]*glob.Pattern, 0, len(paths))
+	for _, p := range paths {
+		pattern, err := glob.Compile(p, '/')
+		if err != nil {
+			return "", fmt.Errorf("invalid path pattern %q: %v", p, err)
+		}
+		patterns = append(patterns, pattern)
+	}
+	return chartContents(c, recursive, patterns), nil
+}
+
+func chartContents(c *chartv2.Chart, recursive bool, patterns []*glob.Pattern) string {
 	sb := strings.Builder{}
 	// Files only holds leftovers (README, LICENSE, ...); Raw has every file in the archive.
 	// charts/ entries are vendored subcharts, emitted via Dependencies() when recursive.
 	for _, file := range c.Raw {
-		if strings.HasPrefix(file.Name, "charts/") {
+		if strings.HasPrefix(file.Name, "charts/") || !matchesAny(patterns, file.Name) {
 			continue
 		}
 		fmt.Fprintf(&sb, "# file: %s/%s\n", c.Name(), file.Name)
@@ -81,13 +96,25 @@ func GetChartContents(c *chartv2.Chart, recursive bool) (string, error) {
 	}
 	if recursive {
 		for _, subChart := range c.Dependencies() {
-			fmt.Fprintf(&sb, "# Subchart: %s\n", subChart.Name())
-			subContent, err := GetChartContents(subChart, recursive)
-			if err != nil {
-				return "", fmt.Errorf("failed to get contents for subchart %s: %v", subChart.Name(), err)
+			subContent := chartContents(subChart, recursive, patterns)
+			if subContent == "" {
+				continue
 			}
+			fmt.Fprintf(&sb, "# Subchart: %s\n", subChart.Name())
 			sb.WriteString(subContent)
 		}
 	}
-	return sb.String(), nil
+	return sb.String()
+}
+
+func matchesAny(patterns []*glob.Pattern, name string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	for _, p := range patterns {
+		if p.Match(name) {
+			return true
+		}
+	}
+	return false
 }
