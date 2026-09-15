@@ -235,9 +235,14 @@ func TestE2E_GetChartContents(t *testing.T) {
 	}
 
 	content := getTextContent(t, result)
-	var contents any
+	var contents string
 	if err := json.Unmarshal([]byte(content), &contents); err != nil {
-		t.Errorf("expected valid JSON, got error: %v\ncontent: %s", err, truncate(content, 500))
+		t.Fatalf("expected JSON string, got error: %v\ncontent: %s", err, truncate(content, 500))
+	}
+	for _, want := range []string{"/Chart.yaml\n", "/values.yaml\n", "/templates/"} {
+		if !strings.Contains(contents, want) {
+			t.Errorf("expected contents to include %q\ncontent: %s", want, truncate(contents, 500))
+		}
 	}
 }
 
@@ -433,9 +438,14 @@ func TestE2E_OCI_GetChartContents(t *testing.T) {
 	}
 
 	content := getTextContent(t, result)
-	var contents any
+	var contents string
 	if err := json.Unmarshal([]byte(content), &contents); err != nil {
-		t.Errorf("expected valid JSON, got error: %v\ncontent: %s", err, truncate(content, 500))
+		t.Fatalf("expected JSON string, got error: %v\ncontent: %s", err, truncate(content, 500))
+	}
+	for _, want := range []string{"/Chart.yaml\n", "/values.yaml\n", "/templates/"} {
+		if !strings.Contains(contents, want) {
+			t.Errorf("expected contents to include %q\ncontent: %s", want, truncate(contents, 500))
+		}
 	}
 }
 

@@ -38,8 +38,6 @@ dependencies:
     repository: https://charts.example.org/
 `),
 			},
-		},
-		Files: []*common.File{
 			{
 				Name: "values.yaml",
 				Data: []byte(`
@@ -57,6 +55,20 @@ kind: Deployment
 metadata:
   name: {{ .Release.Name }}
 `),
+			},
+			{
+				Name: "README.md",
+				Data: []byte("# test-chart\n"),
+			},
+			{
+				Name: "charts/dependency1-1.2.3.tgz",
+				Data: []byte("binary subchart archive"),
+			},
+		},
+		Files: []*common.File{
+			{
+				Name: "README.md",
+				Data: []byte("# test-chart\n"),
 			},
 		},
 	}
@@ -77,8 +89,6 @@ name: subchart
 version: 1.0.0
 `),
 			},
-		},
-		Files: []*common.File{
 			{
 				Name: "values.yaml",
 				Data: []byte(`
@@ -106,6 +116,19 @@ func TestGetChartContents(t *testing.T) {
 	if !strings.Contains(contents, "# file:") {
 		t.Fatal("GetChartContents() output doesn't contain expected file markers")
 	}
+	for _, want := range []string{
+		"# file: test-chart/Chart.yaml\n",
+		"# file: test-chart/values.yaml\n",
+		"# file: test-chart/templates/deployment.yaml\n",
+		"# file: test-chart/README.md\n",
+	} {
+		if !strings.Contains(contents, want) {
+			t.Errorf("GetChartContents() output missing %q", want)
+		}
+	}
+	if strings.Contains(contents, "# file: test-chart/charts/") {
+		t.Error("GetChartContents() output should not include vendored subchart archives")
+	}
 
 	// Add a subchart for recursive test
 	mockSubchart := createMockSubchart()
@@ -128,6 +151,9 @@ func TestGetChartContents(t *testing.T) {
 	// Verify subchart content is included
 	if !strings.Contains(contentsRecursive, "# Subchart: subchart") {
 		t.Fatal("Recursive contents should include subchart marker")
+	}
+	if !strings.Contains(contentsRecursive, "# file: subchart/values.yaml\n") {
+		t.Fatal("Recursive contents should include subchart values.yaml")
 	}
 }
 

@@ -69,7 +69,12 @@ func GetChartDependencies(chart *chartv2.Chart) ([]string, error) {
 
 func GetChartContents(c *chartv2.Chart, recursive bool) (string, error) {
 	sb := strings.Builder{}
-	for _, file := range c.Files {
+	// Files only holds leftovers (README, LICENSE, ...); Raw has every file in the archive.
+	// charts/ entries are vendored subcharts, emitted via Dependencies() when recursive.
+	for _, file := range c.Raw {
+		if strings.HasPrefix(file.Name, "charts/") {
+			continue
+		}
 		fmt.Fprintf(&sb, "# file: %s/%s\n", c.Name(), file.Name)
 		sb.Write(file.Data)
 		sb.WriteString("\n\n")
