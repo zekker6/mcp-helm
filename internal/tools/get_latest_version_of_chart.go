@@ -11,7 +11,7 @@ import (
 
 func NewGetLatestVersionOfChartTool() mcp.Tool {
 	return mcp.NewTool("get_latest_version_of_chart",
-		mcp.WithDescription("Retrieves the latest version of the chart. For OCI registries, returns the latest semver tag."),
+		mcp.WithDescription("Retrieves the latest stable (non-prerelease) version of the chart, matching helm's default. For OCI registries, returns the latest stable semver tag."),
 		mcp.WithString("repository_url",
 			mcp.Required(),
 			mcp.Description("Helm repository URL. Supports HTTP repos (e.g., https://charts.example.com) and OCI registries (e.g., oci://ghcr.io/org/charts/mychart)"),

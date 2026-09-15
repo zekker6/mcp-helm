@@ -660,8 +660,12 @@ func (c *HelmClient) GetChartLatestVersion(repoURL, chartName string) (string, e
 		if len(tags) == 0 {
 			return "", fmt.Errorf("no versions found for OCI chart %s", ref)
 		}
-		// Tags are sorted in descending semver order, first is latest
-		return tags[0], nil
+		// An empty constraint skips prereleases, same as helm without --devel.
+		tag, err := registry.GetTagMatchingVersionOrConstraint(tags, "")
+		if err != nil {
+			return "", fmt.Errorf("no stable version found for OCI chart %s: %v", ref, err)
+		}
+		return tag, nil
 	}
 
 	helmRepo, err := c.getRepo(repoURL, repoURL)
@@ -669,14 +673,12 @@ func (c *HelmClient) GetChartLatestVersion(repoURL, chartName string) (string, e
 		return "", fmt.Errorf("failed to get repository: %v", err)
 	}
 
-	chartVersions, ok := helmRepo.IndexFile.Entries[chartName]
-	if !ok || len(chartVersions) == 0 {
-		return "", fmt.Errorf("chart %s not found in repository %s", chartName, repoURL)
+	// An empty version skips prereleases, same as helm without --devel.
+	latest, err := helmRepo.IndexFile.Get(chartName, "")
+	if err != nil {
+		return "", fmt.Errorf("failed to find latest stable version of chart %s in repository %s: %v", chartName, repoURL, err)
 	}
-
-	// IndexFile.SortEntries() sorts versions in descending order, so the first one is the latest.
-	latestVersion := chartVersions[0].Version
-	return latestVersion, nil
+	return latest.Version, nil
 }
 
 func (c *HelmClient) GetChartLatestValues(repoURL, chartName string) (string, error) {

@@ -18,7 +18,7 @@ The MCP Helm server provides the following tools:
 
 - **list_repository_charts** - Lists all charts available in a Helm repository (or chart name for OCI registries)
 - **list_chart_versions** - Lists all available versions/tags for a chart
-- **get_latest_version_of_chart** - Retrieves the latest version of a specific chart
+- **get_latest_version_of_chart** - Retrieves the latest stable (non-prerelease) version of a specific chart
 - **get_chart_values** - Retrieves the values file for a chart (latest version or specific version)
 - **get_chart_contents** - Retrieves the contents of a chart (including templates, values, and metadata), optionally
   filtered by file path glob patterns (for example, `templates/**`)

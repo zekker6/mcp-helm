@@ -3,6 +3,9 @@ package helm_client
 import (
 	"strings"
 	"testing"
+
+	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
+	"helm.sh/helm/v4/pkg/repo/v1"
 )
 
 const (
@@ -76,6 +79,26 @@ func TestGetChartLatestVersion(t *testing.T) {
 	}
 	if version == "" {
 		t.Fatal("GetChartLatestVersion() returned empty version")
+	}
+}
+
+func TestGetChartLatestVersionSkipsPrereleases(t *testing.T) {
+	const repoURL = "https://charts.example.com"
+	idx := &repo.IndexFile{Entries: map[string]repo.ChartVersions{
+		"app": {
+			{Metadata: &chartv2.Metadata{Name: "app", Version: "1.9.0"}},
+			{Metadata: &chartv2.Metadata{Name: "app", Version: "2.0.0-rc.1"}},
+		},
+	}}
+	idx.SortEntries()
+	client := &HelmClient{repos: map[string]*repo.ChartRepository{repoURL: {IndexFile: idx}}}
+
+	version, err := client.GetChartLatestVersion(repoURL, "app")
+	if err != nil {
+		t.Fatalf("GetChartLatestVersion() error = %v", err)
+	}
+	if version != "1.9.0" {
+		t.Fatalf("GetChartLatestVersion() = %q, want %q", version, "1.9.0")
 	}
 }
 
