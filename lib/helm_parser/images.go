@@ -9,6 +9,7 @@ import (
 	"helm.sh/helm/v4/pkg/chart/common"
 	"helm.sh/helm/v4/pkg/chart/common/util"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
 	"helm.sh/helm/v4/pkg/engine"
 )
 
@@ -76,22 +77,18 @@ func parseImage(image string) ImageReference {
 }
 
 func GetChartImages(chart *chartv2.Chart, customValues map[string]interface{}, recursive bool) ([]ImageReference, error) {
-	manifests, err := renderChart(chart, customValues)
+	// The engine renders every subchart along with the parent, so drop the ones disabled
+	// by condition or tags first, as helm install does.
+	if err := chartutil.ProcessDependencies(chart, customValues); err != nil {
+		return nil, fmt.Errorf("failed to process chart dependencies: %v", err)
+	}
+
+	manifests, err := renderChart(chart, customValues, recursive)
 	if err != nil {
 		return nil, err
 	}
 
 	images := extractImagesFromManifests(manifests)
-
-	if recursive {
-		for _, subChart := range chart.Dependencies() {
-			subImages, err := GetChartImages(subChart, customValues, recursive)
-			if err != nil {
-				return nil, fmt.Errorf("failed to render subchart %s: %v", subChart.Name(), err)
-			}
-			images = append(images, subImages...)
-		}
-	}
 
 	images = deduplicateImages(images)
 	sort.Slice(images, func(i, j int) bool {
@@ -101,7 +98,7 @@ func GetChartImages(chart *chartv2.Chart, customValues map[string]interface{}, r
 	return images, nil
 }
 
-func renderChart(chart *chartv2.Chart, customValues map[string]interface{}) ([]string, error) {
+func renderChart(chart *chartv2.Chart, customValues map[string]interface{}, recursive bool) ([]string, error) {
 	options := common.ReleaseOptions{
 		Name:      "release-name",
 		Namespace: "default",
@@ -122,8 +119,13 @@ func renderChart(chart *chartv2.Chart, customValues map[string]interface{}) ([]s
 		return nil, err
 	}
 
+	// Rendered keys are "<chart>/templates/..." for the parent and "<chart>/charts/<sub>/templates/..." for subcharts.
+	parentTemplates := chart.ChartFullPath() + "/templates/"
 	manifests := make([]string, 0, len(rendered))
-	for _, content := range rendered {
+	for name, content := range rendered {
+		if !recursive && !strings.HasPrefix(name, parentTemplates) {
+			continue
+		}
 		if strings.TrimSpace(content) != "" {
 			manifests = append(manifests, content)
 		}

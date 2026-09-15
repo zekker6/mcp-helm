@@ -243,6 +243,42 @@ func TestE2E_GetChartDependencies_VendoredSubchart(t *testing.T) {
 	}
 }
 
+func TestE2E_GetChartImages_Subcharts(t *testing.T) {
+	c := newTestClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	for _, recursive := range []bool{false, true} {
+		result, err := c.CallTool(ctx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name: "get_chart_images",
+				Arguments: map[string]any{
+					"repository_url": testRepoURL,
+					"chart_name":     "kube-prometheus-stack",
+					"recursive":      recursive,
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("CallTool(recursive=%v) failed: %v", recursive, err)
+		}
+		if result.IsError {
+			t.Fatalf("tool returned error (recursive=%v): %v", recursive, result.Content)
+		}
+
+		content := getTextContent(t, result)
+		if !strings.Contains(content, "prometheus-operator") {
+			t.Errorf("recursive=%v: expected parent chart prometheus-operator image\ncontent: %s", recursive, truncate(content, 1000))
+		}
+		if strings.Contains(content, "kube-state-metrics") != recursive {
+			t.Errorf("recursive=%v: kube-state-metrics subchart image presence should match recursive\ncontent: %s", recursive, truncate(content, 1000))
+		}
+		if strings.Contains(content, "windows-exporter") {
+			t.Errorf("recursive=%v: disabled windows-exporter subchart should not be rendered\ncontent: %s", recursive, truncate(content, 1000))
+		}
+	}
+}
+
 func TestE2E_GetChartContents(t *testing.T) {
 	c := newTestClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

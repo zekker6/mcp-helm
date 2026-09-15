@@ -27,7 +27,7 @@ func NewGetChartImagesTool() mcp.Tool {
 			mcp.Description("Chart version. If omitted the latest version will be used"),
 		),
 		mcp.WithBoolean("recursive",
-			mcp.Description("If true, extracts images from subcharts as well. Defaults to false"),
+			mcp.Description("If true, extracts images from enabled subcharts as well. Defaults to false"),
 		),
 		mcp.WithString("custom_values",
 			mcp.Description("JSON object of custom values to override chart defaults (e.g., {\"image.tag\": \"v2\"})"),

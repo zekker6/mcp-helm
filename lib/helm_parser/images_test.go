@@ -1,7 +1,11 @@
 package helm_parser
 
 import (
+	"strings"
 	"testing"
+
+	"helm.sh/helm/v4/pkg/chart/common"
+	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 )
 
 func TestParseImageString(t *testing.T) {
@@ -396,5 +400,86 @@ func TestExtractFromPodSpec(t *testing.T) {
 	}
 	if !hasInit {
 		t.Error("init container image not found")
+	}
+}
+
+func deploymentTemplate(image string) *common.File {
+	return &common.File{Name: "templates/deployment.yaml", Data: []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        image: ` + image + "\n")}
+}
+
+func createMockChartWithSubcharts() *chartv2.Chart {
+	parent := &chartv2.Chart{
+		Metadata: &chartv2.Metadata{
+			APIVersion: chartv2.APIVersionV2,
+			Name:       "parent",
+			Version:    "1.0.0",
+			Dependencies: []*chartv2.Dependency{
+				{Name: "enabled-sub", Version: "1.0.x", Condition: "enabled-sub.enabled"},
+				{Name: "disabled-sub", Version: "1.0.x", Condition: "disabled-sub.enabled"},
+			},
+		},
+		Values: map[string]any{
+			"enabled-sub":  map[string]any{"enabled": true, "image": "enabled-sub:override"},
+			"disabled-sub": map[string]any{"enabled": false},
+		},
+		Templates: []*common.File{deploymentTemplate("parent:v1")},
+	}
+	for _, name := range []string{"enabled-sub", "disabled-sub"} {
+		parent.AddDependency(&chartv2.Chart{
+			Metadata:  &chartv2.Metadata{APIVersion: chartv2.APIVersionV2, Name: name, Version: "1.0.0"},
+			Values:    map[string]any{"image": name + ":default"},
+			Templates: []*common.File{deploymentTemplate("{{ .Values.image }}")},
+		})
+	}
+	return parent
+}
+
+func TestGetChartImagesSubcharts(t *testing.T) {
+	tests := []struct {
+		name         string
+		recursive    bool
+		customValues map[string]any
+		want         []string
+	}{
+		{
+			name: "parent templates only",
+			want: []string{"parent:v1"},
+		},
+		{
+			name:      "recursive includes enabled subcharts with parent-scoped values",
+			recursive: true,
+			want:      []string{"enabled-sub:override", "parent:v1"},
+		},
+		{
+			name:         "custom values enable a disabled subchart",
+			recursive:    true,
+			customValues: map[string]any{"disabled-sub": map[string]any{"enabled": true}},
+			want:         []string{"disabled-sub:default", "enabled-sub:override", "parent:v1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			images, err := GetChartImages(createMockChartWithSubcharts(), tt.customValues, tt.recursive)
+			if err != nil {
+				t.Fatalf("GetChartImages() error = %v", err)
+			}
+			got := make([]string, 0, len(images))
+			for _, img := range images {
+				got = append(got, img.FullImage)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("GetChartImages() images = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
