@@ -203,7 +203,7 @@ func TestGetChartImages(t *testing.T) {
 		t.Fatalf("GetChartLatestVersion() error = %v", err)
 	}
 
-	images, err := client.GetChartImages(testRepoURL, testChartName, version, nil, false)
+	images, err := client.GetChartImages(t.Context(), testRepoURL, testChartName, version, nil, false)
 	if err != nil {
 		t.Fatalf("GetChartImages() error = %v", err)
 	}

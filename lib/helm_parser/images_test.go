@@ -469,7 +469,7 @@ func TestGetChartImagesSubcharts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			images, err := GetChartImages(createMockChartWithSubcharts(), tt.customValues, tt.recursive)
+			images, err := GetChartImages(t.Context(), createMockChartWithSubcharts(), tt.customValues, tt.recursive)
 			if err != nil {
 				t.Fatalf("GetChartImages() error = %v", err)
 			}

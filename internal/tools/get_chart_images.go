@@ -60,7 +60,7 @@ func GetChartImagesHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 			}
 		}
 
-		images, err := c.GetChartImages(params.RepositoryURL, params.ChartName, params.ChartVersion, customValues, recursive)
+		images, err := c.GetChartImages(ctx, params.RepositoryURL, params.ChartName, params.ChartVersion, customValues, recursive)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to extract images: %v", err)), nil
 		}

@@ -728,7 +728,7 @@ func (c *HelmClient) GetChartDependencies(repoURL, chartName, version string) ([
 	return deps, nil
 }
 
-func (c *HelmClient) GetChartImages(repoURL, chartName, version string, customValues map[string]any, recursive bool) ([]helm_parser.ImageReference, error) {
+func (c *HelmClient) GetChartImages(ctx context.Context, repoURL, chartName, version string, customValues map[string]any, recursive bool) ([]helm_parser.ImageReference, error) {
 	loadedChart, err := c.loadChart(repoURL, chartName, version)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
@@ -738,7 +738,7 @@ func (c *HelmClient) GetChartImages(repoURL, chartName, version string, customVa
 		return nil, fmt.Errorf("chart %s version %s not found", chartName, version)
 	}
 
-	images, err := helm_parser.GetChartImages(loadedChart, customValues, recursive)
+	images, err := helm_parser.GetChartImages(ctx, loadedChart, customValues, recursive)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract images from chart %s version %s: %v", chartName, version, err)
 	}

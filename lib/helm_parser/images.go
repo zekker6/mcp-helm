@@ -1,6 +1,7 @@
 package helm_parser
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -76,14 +77,14 @@ func parseImage(image string) ImageReference {
 	return ref
 }
 
-func GetChartImages(chart *chartv2.Chart, customValues map[string]interface{}, recursive bool) ([]ImageReference, error) {
+func GetChartImages(ctx context.Context, chart *chartv2.Chart, customValues map[string]interface{}, recursive bool) ([]ImageReference, error) {
 	// The engine renders every subchart along with the parent, so drop the ones disabled
 	// by condition or tags first, as helm install does.
 	if err := chartutil.ProcessDependencies(chart, customValues); err != nil {
 		return nil, fmt.Errorf("failed to process chart dependencies: %v", err)
 	}
 
-	manifests, err := renderChart(chart, customValues, recursive)
+	manifests, err := renderChart(ctx, chart, customValues, recursive)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +99,7 @@ func GetChartImages(chart *chartv2.Chart, customValues map[string]interface{}, r
 	return images, nil
 }
 
-func renderChart(chart *chartv2.Chart, customValues map[string]interface{}, recursive bool) ([]string, error) {
+func renderChart(ctx context.Context, chart *chartv2.Chart, customValues map[string]interface{}, recursive bool) ([]string, error) {
 	options := common.ReleaseOptions{
 		Name:      "release-name",
 		Namespace: "default",
@@ -114,7 +115,7 @@ func renderChart(chart *chartv2.Chart, customValues map[string]interface{}, recu
 	}
 
 	e := engine.Engine{Strict: false, LintMode: true}
-	rendered, err := e.Render(chart, valuesToRender)
+	rendered, err := e.RenderWithContext(ctx, chart, valuesToRender)
 	if err != nil {
 		return nil, err
 	}
