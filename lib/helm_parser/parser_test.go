@@ -236,6 +236,48 @@ func TestGetChartContentsInvalidPath(t *testing.T) {
 	}
 }
 
+func TestGetChartDependenciesVendoredSubchart(t *testing.T) {
+	vendored := &chartv2.Chart{
+		Metadata: &chartv2.Metadata{Name: "vendored", Version: "0.1.3"},
+		Raw: []*common.File{{Name: "Chart.yaml", Data: []byte(`
+name: vendored
+version: 0.1.3
+dependencies:
+  - name: nested
+    version: 1.0.0
+    repository: https://charts.example.com/
+`)}},
+	}
+	parent := &chartv2.Chart{
+		Metadata: &chartv2.Metadata{Name: "parent", Version: "1.0.0"},
+		Raw: []*common.File{{Name: "Chart.yaml", Data: []byte(`
+name: parent
+version: 1.0.0
+dependencies:
+  - name: vendored
+    version: 0.1.*
+    repository: ""
+`)}},
+	}
+	parent.AddDependency(vendored)
+
+	deps, err := GetChartDependencies(parent)
+	if err != nil {
+		t.Fatalf("GetChartDependencies() error = %v", err)
+	}
+	names := make([]string, 0, len(deps))
+	for _, dep := range deps {
+		var item DependencyItem
+		if err := json.Unmarshal([]byte(dep), &item); err != nil {
+			t.Fatalf("Failed to unmarshal dependency JSON: %v", err)
+		}
+		names = append(names, item.Name)
+	}
+	if strings.Join(names, ",") != "vendored,nested" {
+		t.Fatalf("GetChartDependencies() names = %v, want [vendored nested]", names)
+	}
+}
+
 func TestGetChartDependencies(t *testing.T) {
 	// Create a mock chart with dependencies
 	mockChart := createMockChart()

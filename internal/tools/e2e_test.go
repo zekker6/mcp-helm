@@ -212,6 +212,37 @@ func TestE2E_GetChartDependencies(t *testing.T) {
 	}
 }
 
+func TestE2E_GetChartDependencies_VendoredSubchart(t *testing.T) {
+	c := newTestClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	result, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "get_chart_dependencies",
+			Arguments: map[string]any{
+				"repository_url": testRepoURL,
+				"chart_name":     "kube-prometheus-stack",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool failed: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("tool returned error: %v", result.Content)
+	}
+
+	content := getTextContent(t, result)
+	var deps []string
+	if err := json.Unmarshal([]byte(content), &deps); err != nil {
+		t.Fatalf("expected JSON array of strings, got error: %v\ncontent: %s", err, truncate(content, 500))
+	}
+	if !strings.Contains(strings.Join(deps, "\n"), `"name":"crds"`) {
+		t.Errorf("expected vendored crds dependency\ncontent: %s", truncate(content, 500))
+	}
+}
+
 func TestE2E_GetChartContents(t *testing.T) {
 	c := newTestClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

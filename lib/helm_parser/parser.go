@@ -8,6 +8,7 @@ import (
 	"github.com/gobwas/glob"
 	"gopkg.in/yaml.v2"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
+	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
 )
 
 type chartSchema struct {
@@ -45,7 +46,8 @@ func GetChartDependencies(chart *chartv2.Chart) ([]string, error) {
 	dependentCharts := chart.Dependencies()
 	dependencies := make([]string, 0, len(schema.Dependencies))
 	for _, dep := range schema.Dependencies {
-		if dep.Name == "" || dep.Version == "" || dep.Repository == "" {
+		// repository is optional: an empty one means the subchart is vendored in charts/.
+		if dep.Name == "" || dep.Version == "" {
 			return nil, fmt.Errorf("dependency item is missing required fields: %v", dep)
 		}
 		depJSON, err := json.Marshal(dep)
@@ -54,7 +56,7 @@ func GetChartDependencies(chart *chartv2.Chart) ([]string, error) {
 		}
 		dependencies = append(dependencies, string(depJSON))
 		for _, dependentChart := range dependentCharts {
-			if dependentChart.Name() == dep.Name && dependentChart.Metadata.Version == dep.Version {
+			if dependentChart.Name() == dep.Name && chartutil.IsCompatibleRange(dep.Version, dependentChart.Metadata.Version) {
 				dependantChartDeps, err := GetChartDependencies(dependentChart)
 				if err != nil {
 					return nil, fmt.Errorf("failed to get dependencies for chart %s: %v", dependentChart.Name(), err)
