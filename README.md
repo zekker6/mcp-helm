@@ -120,6 +120,13 @@ go install github.com/zekker6/mcp-helm/cmd/mcp-helm@latest
 Configure your MCP client to connect to this server. The server implements the standard MCP protocol for tool discovery
 and execution.
 
+### Repository index caching
+
+The index of an HTTP Helm repository is downloaded on first use and reused for `-repo-index-max-age` (default `5m`).
+Once that age is exceeded, the next request downloads the index again, so newly published chart versions show up
+without a restart. Set `-repo-index-max-age=0` to download the index on every request. OCI registries are always
+queried live.
+
 ### Authentication
 
 The server supports authentication for both OCI registries and HTTP Helm repositories.

@@ -3,6 +3,7 @@ package helm_client
 import (
 	"strings"
 	"testing"
+	"time"
 
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/repo/v1"
@@ -91,7 +92,10 @@ func TestGetChartLatestVersionSkipsPrereleases(t *testing.T) {
 		},
 	}}
 	idx.SortEntries()
-	client := &HelmClient{repos: map[string]*repo.ChartRepository{repoURL: {IndexFile: idx}}}
+	client := &HelmClient{
+		options: &clientOptions{repoIndexMaxAge: time.Hour},
+		repos:   map[string]*cachedRepo{repoURL: {repo: &repo.ChartRepository{IndexFile: idx}, fetched: time.Now()}},
+	}
 
 	version, err := client.GetChartLatestVersion(repoURL, "app")
 	if err != nil {

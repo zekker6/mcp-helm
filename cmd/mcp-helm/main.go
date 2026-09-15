@@ -46,6 +46,8 @@ var (
 	tlsCAFile             = flag.String("tls-ca", "", "Path to CA certificate file for verifying HTTP repository servers")
 	tlsInsecureSkipVerify = flag.Bool("tls-insecure-skip-verify", false, "Skip TLS certificate verification for HTTP repositories (insecure)")
 	passCredentialsAll    = flag.Bool("pass-credentials-all", false, "Pass credentials to all domains when following redirects")
+
+	repoIndexMaxAge = flag.Duration("repo-index-max-age", helm_client.DefaultRepoIndexMaxAge, "How long to reuse a downloaded HTTP repository index before downloading it again. 0 downloads it on every request")
 )
 
 func main() {
@@ -144,6 +146,12 @@ func getHelmClient() *helm_client.HelmClient {
 		}
 		os.Exit(1)
 	}
+
+	if *repoIndexMaxAge < 0 {
+		logger.Error("-repo-index-max-age must not be negative", zap.Duration("repoIndexMaxAge", *repoIndexMaxAge))
+		os.Exit(1)
+	}
+	clientOpts = append(clientOpts, helm_client.WithRepoIndexMaxAge(*repoIndexMaxAge))
 
 	if *repoUsername != "" && *repoPasswordFile != "" {
 		password, err := readPasswordFile(*repoPasswordFile)

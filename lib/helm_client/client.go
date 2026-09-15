@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"helm.sh/helm/v4/pkg/chart/loader"
@@ -28,9 +29,11 @@ import (
 	"github.com/zekker6/mcp-helm/lib/logger"
 )
 
-var (
-	tmpDir = "/tmp/helm_cache"
-)
+var tmpDir = "/tmp/helm_cache"
+
+// DefaultRepoIndexMaxAge is how long a downloaded HTTP repository index is
+// reused before it is downloaded again.
+const DefaultRepoIndexMaxAge = 1 * time.Hour
 
 type ClientOption func(*clientOptions)
 
@@ -49,6 +52,9 @@ type clientOptions struct {
 	caFile                string
 	insecureSkipTLSVerify bool
 	passCredentialsAll    bool
+
+	// HTTP repository index cache
+	repoIndexMaxAge time.Duration
 }
 
 // WithCredentialsFile sets the path to a Docker-style credentials file for OCI registries.
@@ -103,6 +109,19 @@ func WithPassCredentialsAll(pass bool) ClientOption {
 	}
 }
 
+// WithRepoIndexMaxAge sets how long a downloaded HTTP repository index is reused
+// before it is downloaded again. Zero downloads the index on every request.
+func WithRepoIndexMaxAge(maxAge time.Duration) ClientOption {
+	return func(o *clientOptions) {
+		o.repoIndexMaxAge = maxAge
+	}
+}
+
+type cachedRepo struct {
+	repo    *repo.ChartRepository
+	fetched time.Time
+}
+
 type HelmClient struct {
 	settings *cli.EnvSettings
 
@@ -126,7 +145,7 @@ type HelmClient struct {
 	options *clientOptions
 
 	reposMu sync.Mutex
-	repos   map[string]*repo.ChartRepository
+	repos   map[string]*cachedRepo
 }
 
 // NewClient creates a new HelmClient with optional configuration.
@@ -142,7 +161,7 @@ type HelmClient struct {
 // repositories always use the basic-auth credentials (scoped per repository in
 // getRepo).
 func NewClient(opts ...ClientOption) (*HelmClient, error) {
-	options := &clientOptions{}
+	options := &clientOptions{repoIndexMaxAge: DefaultRepoIndexMaxAge}
 	for _, opt := range opts {
 		opt(options)
 	}
@@ -377,12 +396,14 @@ func (c *HelmClient) getRepo(name, url string) (*repo.ChartRepository, error) {
 	defer c.reposMu.Unlock()
 
 	if c.repos == nil {
-		c.repos = make(map[string]*repo.ChartRepository)
+		c.repos = make(map[string]*cachedRepo)
 	}
 
-	// todo: refresh index periodically based on last update time or a fixed interval
-	if v, exists := c.repos[name]; exists {
-		return v, nil
+	// An expired entry is replaced with a new ChartRepository rather than
+	// updated in place, so callers still reading the previous IndexFile keep a
+	// consistent snapshot.
+	if v, exists := c.repos[name]; exists && c.options != nil && time.Since(v.fetched) < c.options.repoIndexMaxAge {
+		return v.repo, nil
 	}
 
 	entry := &repo.Entry{
@@ -418,7 +439,7 @@ func (c *HelmClient) getRepo(name, url string) (*repo.ChartRepository, error) {
 	requestedRepo.IndexFile = file
 	requestedRepo.IndexFile.SortEntries()
 
-	c.repos[name] = requestedRepo
+	c.repos[name] = &cachedRepo{repo: requestedRepo, fetched: time.Now()}
 	return requestedRepo, nil
 }
 
@@ -600,7 +621,7 @@ func (c *HelmClient) loadChartFromHTTP(repoURL, chartName, version string) (*cha
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	chartPath := filepath.Join(tempDir, fmt.Sprintf("%s-%s", chartName, version))
-	_ = os.MkdirAll(chartPath, 0755)
+	_ = os.MkdirAll(chartPath, 0o755)
 
 	// Forward the same auth options getRepo applies to the index download.
 	// The Helm SDK's ChartDownloader does not auto-discover credentials from
