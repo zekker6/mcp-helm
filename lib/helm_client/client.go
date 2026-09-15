@@ -37,7 +37,7 @@ const DefaultRepoIndexMaxAge = 1 * time.Hour
 
 type ClientOption func(*clientOptions)
 
-type clientOptions struct {
+type c8fa876048f7c3ec28d8b9005b3c39e9d880a2931lientOptions struct {
 	// OCI registry options
 	credentialsFile string
 	plainHTTP       bool
@@ -171,7 +171,10 @@ func NewClient(opts ...ClientOption) (*HelmClient, error) {
 	settings.RegistryConfig = path.Join(tmpDir, "helm-registry.conf")
 	settings.RepositoryConfig = path.Join(tmpDir, "helm-repository.conf")
 
-	baseOpts := []registry.ClientOption{registry.ClientOptEnableCache(true)}
+	baseOpts := []registry.ClientOption{
+		registry.ClientOptEnableCache(true),
+		registry.ClientOptHTTPClient(newRegistryHTTPClient()),
+	}
 	if options.plainHTTP {
 		baseOpts = append(baseOpts, registry.ClientOptPlainHTTP())
 	}
@@ -422,7 +425,7 @@ func (c *HelmClient) getRepo(name, url string) (*repo.ChartRepository, error) {
 		entry.PassCredentialsAll = c.options.passCredentialsAll
 	}
 
-	requestedRepo, err := repo.NewChartRepository(entry, getter.All(c.settings))
+	requestedRepo, err := repo.NewChartRepository(entry, c.getters())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chart repository: %v", err)
 	}
@@ -644,7 +647,7 @@ func (c *HelmClient) loadChartFromHTTP(repoURL, chartName, version string) (*cha
 	dl := downloader.ChartDownloader{
 		Out:              io.Discard,
 		Keyring:          "",
-		Getters:          getter.All(c.settings),
+		Getters:          c.getters(),
 		Options:          downloadOpts,
 		RepositoryConfig: c.settings.RepositoryConfig,
 		RepositoryCache:  c.settings.RepositoryCache,
