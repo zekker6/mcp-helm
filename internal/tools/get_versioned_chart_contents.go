@@ -25,7 +25,7 @@ func NewGetChartContentsTool() mcp.Tool {
 			mcp.Description("Chart version. If omitted the latest version will be used"),
 		),
 		mcp.WithBoolean("recursive",
-			mcp.Description("If true, retrieves all files in the chart recursively. Defaults to false"),
+			mcp.Description("If true, also includes files from subcharts. Defaults to false"),
 		),
 		mcp.WithArray("paths",
 			mcp.WithStringItems(),
