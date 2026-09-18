@@ -37,7 +37,7 @@ const DefaultRepoIndexMaxAge = 1 * time.Hour
 
 type ClientOption func(*clientOptions)
 
-type c8fa876048f7c3ec28d8b9005b3c39e9d880a2931lientOptions struct {
+type clientOptions struct {
 	// OCI registry options
 	credentialsFile string
 	plainHTTP       bool
