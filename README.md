@@ -89,7 +89,7 @@ mise i ubi:zekker6/mcp-helm@latest
 
 ### Install with Go
 
-> Note: Go 1.24.3 is required.
+> Note: Go 1.26.0 is required.
 
 ```bash
 go install github.com/zekker6/mcp-helm/cmd/mcp-helm@latest
@@ -97,7 +97,7 @@ go install github.com/zekker6/mcp-helm/cmd/mcp-helm@latest
 
 ### Build from Source
 
-> Note: Go 1.24.3 is required.
+> Note: Go 1.26.0 is required.
 
 1. Clone the repository:
    ```bash
@@ -244,8 +244,244 @@ docker run -d --name mcp-helm -p 8012:8012 \
   -mode=sse
 ```
 
+## Observability
+
+The server can export OpenTelemetry traces, metrics and logs over OTLP. It is **disabled by default**: with
+`OTEL_ENABLED` unset nothing is exported, no exporter is constructed, no provider is registered globally and no
+instrumentation is installed, so the binary behaves exactly as it does today.
+
+`OTEL_ENABLED` is the only switch. `OTEL_SDK_DISABLED` is **not** consulted, and neither is
+`OTEL_EXPORTER_OTLP_PROTOCOL`: the wire protocol comes from the endpoint's scheme, described below.
+
+### Environment Variables
+
+| Variable                             | Default        | Description                                                                                          |
+|--------------------------------------|----------------|------------------------------------------------------------------------------------------------------|
+| `OTEL_ENABLED`                       | `false`        | Master switch. Telemetry is set up only when this holds a true-ish value (`true`, `1`, `t`)           |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`        | -              | Base endpoint for all three signals. Required when enabled, unless every per-signal endpoint is set   |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | base endpoint  | Traces-only override, used verbatim (include the full path for HTTP)                                 |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`| base endpoint  | Metrics-only override, used verbatim                                                                 |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`   | base endpoint  | Logs-only override, used verbatim                                                                    |
+| `OTEL_SERVICE_NAME`                  | `mcp-helm`     | Service name reported to the collector                                                               |
+| `OTEL_RESOURCE_ATTRIBUTES`           | -              | Extra resource attributes, e.g. `deployment.environment.name=production`                                  |
+| `OTEL_EXPORTER_OTLP_HEADERS`         | -              | Headers sent with every export, e.g. for authentication. Read by the SDK exporters                   |
+| `OTEL_EXPORTER_OTLP_TIMEOUT`         | `10000`        | Export timeout in milliseconds. Read by the SDK exporters                                            |
+| `OTEL_EXPORTER_OTLP_COMPRESSION`     | -              | Set to `gzip` to compress exports. Read by the SDK exporters                                         |
+| `OTEL_METRIC_EXPORT_INTERVAL`        | `60000`        | Metric export interval in milliseconds                                                               |
+| `OTEL_EXPORTER_OTLP_CERTIFICATE`     | system roots   | PEM CA bundle used to verify a `https://` or `grpcs://` collector. Read by the SDK exporters         |
+| `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE` | -           | PEM client certificate for mTLS to the collector. Read by the SDK exporters                          |
+| `OTEL_EXPORTER_OTLP_CLIENT_KEY`      | -              | PEM client key for mTLS to the collector. Read by the SDK exporters                                  |
+
+When telemetry is enabled and an endpoint is missing or malformed, the server exits non-zero with an error naming the
+offending variable; a typo never degrades silently into "no telemetry". With `OTEL_ENABLED` off the endpoint variables
+are not parsed at all, so a stale value in the environment cannot break startup.
+
+### Resource Attributes
+
+The server sets `service.name` (from `OTEL_SERVICE_NAME`, else `mcp-helm`) and `service.version` itself, and reads
+anything else from `OTEL_RESOURCE_ATTRIBUTES`. The semantic conventions call for more than that, and the rest has to
+come from the deployment:
+
+| Attribute                    | Where it should come from                                                             |
+|------------------------------|---------------------------------------------------------------------------------------|
+| `deployment.environment.name`| `OTEL_RESOURCE_ATTRIBUTES`. Note the `.name` suffix - bare `deployment.environment` is deprecated |
+| `service.instance.id`        | `OTEL_RESOURCE_ATTRIBUTES` from the downward API. Required once more than one replica runs, or every instance's series collide |
+| `service.namespace`          | `OTEL_RESOURCE_ATTRIBUTES`, when other services share the backend                     |
+| `k8s.pod.uid` and other `k8s.*` | The Collector's `k8sattributes` processor, which is the supported way to add them   |
+
+On Kubernetes, the first two come from the downward API:
+
+```yaml
+env:
+  - name: POD_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.name
+  - name: OTEL_RESOURCE_ATTRIBUTES
+    value: deployment.environment.name=production,service.instance.id=$(POD_NAME)
+```
+
+### Endpoint Schemes
+
+The wire protocol and TLS both come from the endpoint's URL scheme:
+
+| Endpoint                        | Protocol  | TLS | Exports go to                                                       |
+|---------------------------------|-----------|-----|---------------------------------------------------------------------|
+| `grpc://collector:4317`         | OTLP/gRPC | no  | `collector:4317`                                                    |
+| `grpcs://otel.example.com:4317` | OTLP/gRPC | yes | `otel.example.com:4317`                                             |
+| `http://collector:4318`         | OTLP/HTTP | no  | `http://collector:4318/v1/traces`, `/v1/metrics`, `/v1/logs`        |
+| `https://otel.example.com`      | OTLP/HTTP | yes | `https://otel.example.com/v1/traces`, `/v1/metrics`, `/v1/logs`     |
+
+Any other scheme is a startup error naming the four accepted schemes.
+
+- The **base** endpoint is a base URL: for HTTP the signal path (`/v1/traces`, `/v1/metrics`, `/v1/logs`) is appended,
+  after trimming a trailing slash. A collector endpoint injected with a trailing slash is handled.
+- A **per-signal** endpoint is used verbatim, as the OTLP specification requires, so for HTTP it has to carry the full
+  path including `/v1/traces` and friends.
+- gRPC endpoints keep only `host:port`; gRPC has no signal path, so any path is dropped.
+- The protocol is resolved per signal, so mixed configurations work: traces over gRPC while metrics and logs go over
+  HTTP is a supported setup.
+
+### Configuration Examples
+
+One endpoint for all three signals:
+
+```bash
+OTEL_ENABLED=true \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
+./mcp-helm -mode=http
+```
+
+Traces, metrics and logs are sent to `http://otel-collector:4318/v1/traces`, `/v1/metrics` and `/v1/logs`. Switching
+that endpoint to `grpc://otel-collector:4317` moves all three signals to OTLP/gRPC without any other change.
+
+Per-signal endpoints, mixing protocols and TLS:
+
+```bash
+OTEL_ENABLED=true \
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=grpc://otel-collector:4317 \
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://metrics.example.com/v1/metrics \
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://logs.example.com/v1/logs \
+OTEL_SERVICE_NAME=mcp-helm \
+OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=production \
+./mcp-helm -mode=http
+```
+
+With Docker:
+
+```bash
+docker run -d --name mcp-helm -p 8012:8012 \
+  -e OTEL_ENABLED=true \
+  -e OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
+  ghcr.io/zekker6/mcp-helm:latest -mode=http
+```
+
+The `OTEL_*` variables are ignored by images built before OpenTelemetry support landed, so pin a tag that has it or
+use `latest`.
+
+### What Is Emitted
+
+#### Traces
+
+A tool call over HTTP produces one trace from the inbound request down to the Helm work it triggers:
+
+```
+POST /mcp                       (HTTP server span)
+  mcp.tools/call                (MCP protocol span)
+    tool.get_chart_images       (MCP tool span)
+      helm.get_chart_images     (Helm operation span)
+        helm.load_chart
+          helm.oci.pull
+        helm.parse.images
+```
+
+The Helm-specific attributes below are written without their `cloud.zekker.helm.` prefix for readability - the emitted
+names carry it. That is this project's namespace: the OpenTelemetry naming rules reserve unprefixed names for the
+specification, and no registry attribute covers a Helm repository or chart. Attributes that do come from the registry
+(`url.full`, `server.address`, `server.port`, `error.type`, `gen_ai.*`, `mcp.*`) are shown in full.
+
+| Span                          | Kind     | Attributes                                                                                   |
+|-------------------------------|----------|----------------------------------------------------------------------------------------------|
+| `<METHOD> <route>`            | server   | `otelhttp` HTTP server semantic conventions. Only in `sse` and `http` modes                  |
+| `mcp.<method>`                | server   | `mcp.method`, `mcp.session.id`, `mcp.protocol.version` (set by mcp-go)                       |
+| `tool.<name>`                 | internal | `gen_ai.tool.name`, `gen_ai.operation.name`, `mcp.method.name`                                |
+| `helm.list_charts`            | internal | `repository.url`, `repository.type`, `chart.count`                                            |
+| `helm.list_chart_versions`    | internal | + `chart.name`, `version.count`                                                               |
+| `helm.get_latest_version`     | internal | + `chart.name`, `chart.version` (resolved)                                                    |
+| `helm.get_latest_values`      | internal | + `chart.name`, `chart.version` (resolved). Library-only; no MCP tool reaches it              |
+| `helm.get_chart_values`       | internal | + `chart.name`, `chart.version`                                                               |
+| `helm.get_chart_contents`     | internal | + `chart.name`, `chart.version`, `recursive`                                                  |
+| `helm.get_chart_dependencies` | internal | + `chart.name`, `chart.version`, `dependency.count`                                           |
+| `helm.get_chart_images`       | internal | + `chart.name`, `chart.version`, `recursive`, `image.count`                                   |
+| `helm.load_chart`             | internal | `repository.type`, `chart.name`, `chart.version`                                              |
+| `helm.oci.pull`               | client   | `oci.ref`, `server.address`, `server.port`                                                    |
+| `helm.oci.tags`               | client   | `oci.ref`, `server.address`, `server.port`                                                    |
+| `helm.repo.index`             | client   | `repository.url`, `server.address`, `server.port`                                             |
+| `helm.chart.download`         | client   | `url.full`, `server.address`, `server.port`                                                   |
+| `helm.parse.images`           | internal | `recursive`                                                                                   |
+| `helm.parse.contents`         | internal | `recursive`                                                                                   |
+
+A failing span is marked with an `ERROR` status, records the exception and carries `error.type`. URL attributes are
+sanitized: `user:password@` userinfo is stripped before a repository, OCI or chart URL becomes a span attribute.
+
+The `helm.chart.download` span reports `url.full` because the chart URL is the exact resource fetched.
+`helm.repo.index` does not: the Helm getter resolves the index path itself, so the URL this server holds is not the one
+requested.
+
+mcp-go labels its own spans with `mcp.method` and `mcp.tool.name`, which the registry has since deprecated in favour of
+`mcp.method.name` and `gen_ai.tool.name`. The current names are added to the `tool.<name>` span by this server, so both
+are present there; `mcp.<method>` spans carry only what mcp-go sets.
+
+Incoming W3C `traceparent` / `tracestate` headers are honoured in `sse` and `http` modes, so a tool call joins the
+caller's trace instead of starting a new one. In `stdio` mode each MCP message is a root span.
+
+#### Metrics
+
+| Metric                                  | Kind      | Unit | Attributes                                                                   |
+|-----------------------------------------|-----------|------|------------------------------------------------------------------------------|
+| `mcp.server.operation.duration`         | histogram | `s`  | `mcp.method.name`, `gen_ai.tool.name`, `gen_ai.operation.name`, `error.type` |
+| `cloud.zekker.helm.operation.duration`  | histogram | `s`  | `…helm.operation`, `…helm.repository.type`, `error.type`                     |
+| `http.server.*`                | from `otelhttp` | - | `http.server.request.duration`, `http.server.request.body.size`, `http.server.response.body.size`. `sse`/`http` modes only |
+| `go.*`                         | from the OTel runtime instrumentation | - | Go runtime memory, GC and goroutine metrics |
+
+`mcp.server.operation.duration` is the histogram the MCP semantic conventions define for the receiving side.
+
+`error.type` is **absent on success**, which is what the conventions specify - do not filter on an `ok` value, filter on
+the attribute being unset. On a failure it holds the Go error type, except for a tool handler that reported the failure
+to its caller rather than returning an error (mcp-go delivers that as a successful response carrying an error result),
+where it is `tool_error`. A tool handler that panicked reports `_OTHER`. The histograms' `_count` series double as call
+rates, so there is no separate counter.
+
+Helm operations nest, and each level records its own point: `get_latest_values` wraps `get_latest_version` and
+`get_chart_values`, and any tool call that omits `chart_version` records `get_latest_version` before the operation it
+was asked for. Filter by `cloud.zekker.helm.operation` rather than summing `_count` across operations, or one logical
+call is counted more than once.
+
+Metric attributes are deliberately low cardinality: repository URLs, chart names and chart versions appear on spans
+only, never on a metric. On the `http.server.*` metrics, `server.address` and `server.port` report `-httpListenAddr`
+rather than the request's `Host` header, so an unauthenticated probe varying that header cannot open a series per
+value.
+
+#### Logs
+
+With telemetry enabled, log records are teed to the OTLP log exporter in addition to stderr. Both sinks honour
+`-logLevel`, so raising it keeps the filtered records off the wire as well as out of stderr. Each tool call also logs
+one INFO record with the tool name, duration and, on failure, `error.type`.
+
+Every record emitted from a traced call site is correlated with its span, so logs, traces and metrics line up in the
+backend. The two sinks carry that correlation differently: the stderr line gets `trace_id` and `span_id` fields, while
+the exported record gets the log data model's own trace id fields, which the SDK fills in from the emitting context.
+The ids are stripped from the exported record's attributes so they are not on the wire twice.
+
+### Limitations
+
+Two things are deliberately not instrumented:
+
+- **No outbound HTTP client spans.** Helm's SDK builds its own request contexts internally and its transport option
+  takes a concrete `*http.Transport`, so an instrumented HTTP client would emit orphaned root spans disconnected from
+  the tool's trace. Outbound work is covered by the manual `helm.repo.index`, `helm.chart.download`, `helm.oci.pull`
+  and `helm.oci.tags` client spans instead.
+- **Long-lived stream requests are excluded from HTTP traces and metrics.** The `GET /sse` request in `sse` mode and the
+  `GET /mcp` request in `http` mode stay open for the life of the client session. Tracing them would produce hours-long
+  spans and put session durations into the request-latency histogram, so both are filtered out. The JSON-RPC requests
+  carried over those sessions are traced normally.
+
+## Shutdown
+
+On `SIGTERM` or `SIGINT` the server stops accepting new work, drains in-flight requests within 10 seconds and then
+flushes buffered telemetry within 5, so a client that never disconnects or a collector that never answers cannot keep
+the process alive. The budgets are separate on purpose: a drain that runs long cannot spend the time the flush needs.
+A second signal terminates immediately.
+
+Give the process room to finish: set `terminationGracePeriodSeconds` (or `docker stop -t`) to at least 20 seconds, or
+the spans and log records buffered at the moment of the signal are lost.
+
+A transport that fails to start - a port already in use, an unusable listen address - is logged as `fatal` and exits
+with status 1.
+
 ## Roadmap
 
+- [x] OpenTelemetry instrumentation (traces, metrics and logs over OTLP)
 - [x] Add more tools
     - [x] List all charts in a repository
     - [x] List all versions of a chart
