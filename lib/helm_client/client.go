@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/zap"
 	"helm.sh/helm/v4/pkg/chart/loader"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
@@ -265,7 +266,7 @@ func withRegistryOpts(base []registry.ClientOption, extra ...registry.ClientOpti
 // client; everything else uses the basic-auth client. The resolution mirrors
 // the registry client's own credential lookup (oras-go store + Docker Hub key
 // mapping), so the routing decision matches what the chosen client will use.
-func (c *HelmClient) registryClientFor(repoURL string) *registry.Client {
+func (c *HelmClient) registryClientFor(ctx context.Context, repoURL string) *registry.Client {
 	if c.credStore == nil {
 		return c.registryClient
 	}
@@ -286,7 +287,7 @@ func (c *HelmClient) registryClientFor(repoURL string) *registry.Client {
 	cl = c.registryClient
 	// Same key derivation helm's registry client uses for credential lookup.
 	key := credentials.ServerAddressFromHostname(credentials.ServerAddressFromRegistry(host))
-	if cred, err := c.credStore.Get(context.Background(), key); err == nil && cred != auth.EmptyCredential {
+	if cred, err := c.credStore.Get(ctx, key); err == nil && cred != auth.EmptyCredential {
 		cl = c.registryClientCreds
 	}
 
@@ -294,6 +295,23 @@ func (c *HelmClient) registryClientFor(repoURL string) *registry.Client {
 	c.routeCache[host] = cl
 	c.routeMu.Unlock()
 	return cl
+}
+
+// ociTags lists the tags of an OCI chart reference. Both callers wrap the same
+// SDK call in the same span, so the span lives here rather than at either.
+func (c *HelmClient) ociTags(ctx context.Context, repoURL, ref string) (tags []string, err error) {
+	ctx, span := startClientSpan(ctx, spanOCITags, ociRefAttributes(repoURL, ref)...)
+	defer func() { endSpan(ctx, span, err) }()
+
+	return c.registryClientFor(ctx, repoURL).Tags(ref)
+}
+
+// ociPull pulls a chart from an OCI registry.
+func (c *HelmClient) ociPull(ctx context.Context, repoURL, ref string) (result *registry.PullResult, err error) {
+	ctx, span := startClientSpan(ctx, spanOCIPull, ociRefAttributes(repoURL, ref)...)
+	defer func() { endSpan(ctx, span, err) }()
+
+	return c.registryClientFor(ctx, repoURL).Pull(ref, registry.PullOptWithChart(true))
 }
 
 // newCredStore builds an oras-go credentials store from a Docker-style
@@ -394,7 +412,7 @@ func ExtractChartNameFromOCI(repoURL string) string {
 	return ""
 }
 
-func (c *HelmClient) getRepo(name, url string) (*repo.ChartRepository, error) {
+func (c *HelmClient) getRepo(ctx context.Context, name, url string) (chartRepo *repo.ChartRepository, err error) {
 	c.reposMu.Lock()
 	defer c.reposMu.Unlock()
 
@@ -408,6 +426,11 @@ func (c *HelmClient) getRepo(name, url string) (*repo.ChartRepository, error) {
 	if v, exists := c.repos[name]; exists && c.options != nil && time.Since(v.fetched) < c.options.repoIndexMaxAge {
 		return v.repo, nil
 	}
+
+	// Opened after the cache check: a served-from-cache repository does no
+	// index fetch, and a span for it would report the fetch as free.
+	_, span := startClientSpan(ctx, spanRepoIndex, repositoryAttributes(url)...)
+	defer func() { endSpan(ctx, span, err) }()
 
 	entry := &repo.Entry{
 		Name: name,
@@ -425,12 +448,12 @@ func (c *HelmClient) getRepo(name, url string) (*repo.ChartRepository, error) {
 		entry.PassCredentialsAll = c.options.passCredentialsAll
 	}
 
-	requestedRepo, err := repo.NewChartRepository(entry, c.getters())
+	chartRepo, err = repo.NewChartRepository(entry, c.getters())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chart repository: %v", err)
 	}
 
-	indexFileLocation, err := requestedRepo.DownloadIndexFile()
+	indexFileLocation, err := chartRepo.DownloadIndexFile()
 	if err != nil {
 		return nil, fmt.Errorf("failed to download repository index: %v", err)
 	}
@@ -439,14 +462,17 @@ func (c *HelmClient) getRepo(name, url string) (*repo.ChartRepository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load index file: %v", err)
 	}
-	requestedRepo.IndexFile = file
-	requestedRepo.IndexFile.SortEntries()
+	chartRepo.IndexFile = file
+	chartRepo.IndexFile.SortEntries()
 
-	c.repos[name] = &cachedRepo{repo: requestedRepo, fetched: time.Now()}
-	return requestedRepo, nil
+	c.repos[name] = &cachedRepo{repo: chartRepo, fetched: time.Now()}
+	return chartRepo, nil
 }
 
-func (c *HelmClient) ListCharts(repoURL string) ([]string, error) {
+func (c *HelmClient) ListCharts(ctx context.Context, repoURL string) (names []string, err error) {
+	ctx, op := startOperation(ctx, operationListCharts, repoURL)
+	defer func() { op.end(ctx, err) }()
+
 	if IsOCI(repoURL) {
 		// For OCI, each repository contains a single chart
 		// Return the chart name extracted from the URL
@@ -454,10 +480,13 @@ func (c *HelmClient) ListCharts(repoURL string) ([]string, error) {
 		if chartName == "" {
 			return nil, fmt.Errorf("invalid OCI reference: cannot extract chart name from %s", repoURL)
 		}
+
+		op.setAttributes(attribute.Int(attrHelmChartCount, 1))
+
 		return []string{chartName}, nil
 	}
 
-	helmRepo, err := c.getRepo(repoURL, repoURL)
+	helmRepo, err := c.getRepo(ctx, repoURL, repoURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add repository: %v", err)
 	}
@@ -478,26 +507,35 @@ func (c *HelmClient) ListCharts(repoURL string) ([]string, error) {
 	}
 	sort.Strings(chartsList)
 
+	op.setAttributes(attribute.Int(attrHelmChartCount, len(chartsList)))
+
 	return chartsList, nil
 }
 
-func (c *HelmClient) ListChartVersions(repoURL string, chart string) ([]string, error) {
+func (c *HelmClient) ListChartVersions(ctx context.Context, repoURL string, chart string) (versions []string, err error) {
+	ctx, op := startOperation(ctx, operationListChartVersions, repoURL,
+		attribute.String(attrHelmChartName, chart))
+	defer func() { op.end(ctx, err) }()
+
 	if IsOCI(repoURL) {
 		ref := parseOCIReference(repoURL, chart, "")
-		tags, err := c.registryClientFor(repoURL).Tags(ref)
+		tags, err := c.ociTags(ctx, repoURL, ref)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list tags for OCI chart %s: %v", ref, err)
 		}
+
+		op.setAttributes(attribute.Int(attrHelmVersionCount, len(tags)))
+
 		// Tags are already sorted in descending semver order by Helm's registry package
 		return tags, nil
 	}
 
-	helmRepo, err := c.getRepo(repoURL, repoURL)
+	helmRepo, err := c.getRepo(ctx, repoURL, repoURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add repository: %v", err)
 	}
 
-	versions := make([]string, 0)
+	versions = make([]string, 0)
 	for k, v := range helmRepo.IndexFile.Entries {
 		if k != chart {
 			continue
@@ -509,11 +547,18 @@ func (c *HelmClient) ListChartVersions(repoURL string, chart string) ([]string, 
 	}
 	// Do not sort version as those were sorted in original index file
 
+	op.setAttributes(attribute.Int(attrHelmVersionCount, len(versions)))
+
 	return versions, nil
 }
 
-func (c *HelmClient) GetChartValues(repoURL, chartName, version string) (string, error) {
-	loadedChart, err := c.loadChart(repoURL, chartName, version)
+func (c *HelmClient) GetChartValues(ctx context.Context, repoURL, chartName, version string) (values string, err error) {
+	ctx, op := startOperation(ctx, operationGetChartValues, repoURL,
+		attribute.String(attrHelmChartName, chartName),
+		attribute.String(attrHelmChartVersion, version))
+	defer func() { op.end(ctx, err) }()
+
+	loadedChart, err := c.loadChart(ctx, repoURL, chartName, version)
 	if err != nil {
 		return "", fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
 	}
@@ -530,8 +575,14 @@ func (c *HelmClient) GetChartValues(repoURL, chartName, version string) (string,
 	return string(rawContent), nil
 }
 
-func (c *HelmClient) GetChartContents(repoURL, chartName, version string, recursive bool, paths []string) (string, error) {
-	loadedChart, err := c.loadChart(repoURL, chartName, version)
+func (c *HelmClient) GetChartContents(ctx context.Context, repoURL, chartName, version string, recursive bool, paths []string) (contents string, err error) {
+	ctx, op := startOperation(ctx, operationGetChartContents, repoURL,
+		attribute.String(attrHelmChartName, chartName),
+		attribute.String(attrHelmChartVersion, version),
+		attribute.Bool(attrHelmRecursive, recursive))
+	defer func() { op.end(ctx, err) }()
+
+	loadedChart, err := c.loadChart(ctx, repoURL, chartName, version)
 	if err != nil {
 		return "", fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
 	}
@@ -540,25 +591,37 @@ func (c *HelmClient) GetChartContents(repoURL, chartName, version string, recurs
 		return "", fmt.Errorf("chart %s version %s not found", chartName, version)
 	}
 
-	contents, err := helm_parser.GetChartContents(loadedChart, recursive, paths)
+	_, parseSpan := startInternalSpan(ctx, spanParseContents, attribute.Bool(attrHelmRecursive, recursive))
+	contents, err = helm_parser.GetChartContents(loadedChart, recursive, paths)
+	endSpan(ctx, parseSpan, err)
 	if err != nil {
 		return "", fmt.Errorf("failed to get chart contents for %s version %s: %v", chartName, version, err)
 	}
 	return contents, nil
 }
 
-func (c *HelmClient) loadChart(repoURL string, chartName string, version string) (*chartv2.Chart, error) {
-	if IsOCI(repoURL) {
-		return c.loadChartFromOCI(repoURL, chartName, version)
+// loadChart fetches a chart through whichever of the two loaders the repository
+// URL selects. Its span exists to record that branch as helm.repository.type.
+func (c *HelmClient) loadChart(ctx context.Context, repoURL string, chartName string, version string) (chart *chartv2.Chart, err error) {
+	repoType := repositoryType(repoURL)
+
+	ctx, span := startInternalSpan(ctx, spanLoadChart,
+		attribute.String(attrHelmRepositoryType, repoType),
+		attribute.String(attrHelmChartName, chartName),
+		attribute.String(attrHelmChartVersion, version))
+	defer func() { endSpan(ctx, span, err) }()
+
+	if repoType == repositoryTypeOCI {
+		return c.loadChartFromOCI(ctx, repoURL, chartName, version)
 	}
 
-	return c.loadChartFromHTTP(repoURL, chartName, version)
+	return c.loadChartFromHTTP(ctx, repoURL, chartName, version)
 }
 
-func (c *HelmClient) loadChartFromOCI(repoURL, chartName, version string) (*chartv2.Chart, error) {
+func (c *HelmClient) loadChartFromOCI(ctx context.Context, repoURL, chartName, version string) (*chartv2.Chart, error) {
 	ref := parseOCIReference(repoURL, chartName, version)
 
-	result, err := c.registryClientFor(repoURL).Pull(ref, registry.PullOptWithChart(true))
+	result, err := c.ociPull(ctx, repoURL, ref)
 	if err != nil {
 		return nil, fmt.Errorf("failed to pull OCI chart %s: %v", ref, err)
 	}
@@ -580,9 +643,9 @@ func (c *HelmClient) loadChartFromOCI(repoURL, chartName, version string) (*char
 	return v2Chart, nil
 }
 
-func (c *HelmClient) loadChartFromHTTP(repoURL, chartName, version string) (*chartv2.Chart, error) {
+func (c *HelmClient) loadChartFromHTTP(ctx context.Context, repoURL, chartName, version string) (*chartv2.Chart, error) {
 	// TODO: implement caching for values file
-	helmRepo, err := c.getRepo(repoURL, repoURL)
+	helmRepo, err := c.getRepo(ctx, repoURL, repoURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get repository: %v", err)
 	}
@@ -655,7 +718,9 @@ func (c *HelmClient) loadChartFromHTTP(repoURL, chartName, version string) (*cha
 		Verify:           downloader.VerifyNever,
 	}
 
+	_, downloadSpan := startClientSpan(ctx, spanChartDownload, chartDownloadAttributes(chartURL)...)
 	chartOutputPath, _, err := dl.DownloadTo(chartURL, version, chartPath)
+	endSpan(ctx, downloadSpan, err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download chart %s version %s from %s: %v", chartName, version, chartURL, err)
 	}
@@ -674,10 +739,14 @@ func (c *HelmClient) loadChartFromHTTP(repoURL, chartName, version string) (*cha
 	return v2Chart, nil
 }
 
-func (c *HelmClient) GetChartLatestVersion(repoURL, chartName string) (string, error) {
+func (c *HelmClient) GetChartLatestVersion(ctx context.Context, repoURL, chartName string) (latestVersion string, err error) {
+	ctx, op := startOperation(ctx, operationGetLatestVersion, repoURL,
+		attribute.String(attrHelmChartName, chartName))
+	defer func() { op.end(ctx, err) }()
+
 	if IsOCI(repoURL) {
 		ref := parseOCIReference(repoURL, chartName, "")
-		tags, err := c.registryClientFor(repoURL).Tags(ref)
+		tags, err := c.ociTags(ctx, repoURL, ref)
 		if err != nil {
 			return "", fmt.Errorf("failed to list tags for OCI chart %s: %v", ref, err)
 		}
@@ -689,10 +758,13 @@ func (c *HelmClient) GetChartLatestVersion(repoURL, chartName string) (string, e
 		if err != nil {
 			return "", fmt.Errorf("no stable version found for OCI chart %s: %v", ref, err)
 		}
+
+		op.setAttributes(attribute.String(attrHelmChartVersion, tag))
+
 		return tag, nil
 	}
 
-	helmRepo, err := c.getRepo(repoURL, repoURL)
+	helmRepo, err := c.getRepo(ctx, repoURL, repoURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to get repository: %v", err)
 	}
@@ -702,20 +774,34 @@ func (c *HelmClient) GetChartLatestVersion(repoURL, chartName string) (string, e
 	if err != nil {
 		return "", fmt.Errorf("failed to find latest stable version of chart %s in repository %s: %v", chartName, repoURL, err)
 	}
+
+	op.setAttributes(attribute.String(attrHelmChartVersion, latest.Version))
+
 	return latest.Version, nil
 }
 
-func (c *HelmClient) GetChartLatestValues(repoURL, chartName string) (string, error) {
-	v, err := c.GetChartLatestVersion(repoURL, chartName)
+func (c *HelmClient) GetChartLatestValues(ctx context.Context, repoURL, chartName string) (values string, err error) {
+	ctx, op := startOperation(ctx, operationGetLatestValues, repoURL,
+		attribute.String(attrHelmChartName, chartName))
+	defer func() { op.end(ctx, err) }()
+
+	v, err := c.GetChartLatestVersion(ctx, repoURL, chartName)
 	if err != nil {
 		return "", fmt.Errorf("failed to get chart %s version %s: %v", chartName, v, err)
 	}
 
-	return c.GetChartValues(repoURL, chartName, v)
+	op.setAttributes(attribute.String(attrHelmChartVersion, v))
+
+	return c.GetChartValues(ctx, repoURL, chartName, v)
 }
 
-func (c *HelmClient) GetChartDependencies(repoURL, chartName, version string) ([]string, error) {
-	loadedChart, err := c.loadChart(repoURL, chartName, version)
+func (c *HelmClient) GetChartDependencies(ctx context.Context, repoURL, chartName, version string) (deps []string, err error) {
+	ctx, op := startOperation(ctx, operationGetChartDependencies, repoURL,
+		attribute.String(attrHelmChartName, chartName),
+		attribute.String(attrHelmChartVersion, version))
+	defer func() { op.end(ctx, err) }()
+
+	loadedChart, err := c.loadChart(ctx, repoURL, chartName, version)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
 	}
@@ -724,15 +810,24 @@ func (c *HelmClient) GetChartDependencies(repoURL, chartName, version string) ([
 		return nil, fmt.Errorf("chart %s version %s not found", chartName, version)
 	}
 
-	deps, err := helm_parser.GetChartDependencies(loadedChart)
+	deps, err = helm_parser.GetChartDependencies(loadedChart)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependencies for chart %s version %s: %v", chartName, version, err)
 	}
+
+	op.setAttributes(attribute.Int(attrHelmDependencyCount, len(deps)))
+
 	return deps, nil
 }
 
-func (c *HelmClient) GetChartImages(ctx context.Context, repoURL, chartName, version string, customValues map[string]any, recursive bool) ([]helm_parser.ImageReference, error) {
-	loadedChart, err := c.loadChart(repoURL, chartName, version)
+func (c *HelmClient) GetChartImages(ctx context.Context, repoURL, chartName, version string, customValues map[string]any, recursive bool) (images []helm_parser.ImageReference, err error) {
+	ctx, op := startOperation(ctx, operationGetChartImages, repoURL,
+		attribute.String(attrHelmChartName, chartName),
+		attribute.String(attrHelmChartVersion, version),
+		attribute.Bool(attrHelmRecursive, recursive))
+	defer func() { op.end(ctx, err) }()
+
+	loadedChart, err := c.loadChart(ctx, repoURL, chartName, version)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
 	}
@@ -741,9 +836,14 @@ func (c *HelmClient) GetChartImages(ctx context.Context, repoURL, chartName, ver
 		return nil, fmt.Errorf("chart %s version %s not found", chartName, version)
 	}
 
-	images, err := helm_parser.GetChartImages(ctx, loadedChart, customValues, recursive)
+	parseCtx, parseSpan := startInternalSpan(ctx, spanParseImages, attribute.Bool(attrHelmRecursive, recursive))
+	images, err = helm_parser.GetChartImages(parseCtx, loadedChart, customValues, recursive)
+	endSpan(ctx, parseSpan, err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract images from chart %s version %s: %v", chartName, version, err)
 	}
+
+	op.setAttributes(attribute.Int(attrHelmImageCount, len(images)))
+
 	return images, nil
 }

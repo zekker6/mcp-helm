@@ -1,6 +1,7 @@
 package helm_client
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ func TestNewClient(t *testing.T) {
 
 func TestListCharts(t *testing.T) {
 	client := newTestClient(t)
-	charts, err := client.ListCharts(testRepoURL)
+	charts, err := client.ListCharts(context.Background(), testRepoURL)
 	if err != nil {
 		t.Fatalf("ListCharts() error = %v", err)
 	}
@@ -63,7 +64,7 @@ func TestListCharts(t *testing.T) {
 
 func TestListChartVersions(t *testing.T) {
 	client := newTestClient(t)
-	versions, err := client.ListChartVersions(testRepoURL, testChartName)
+	versions, err := client.ListChartVersions(context.Background(), testRepoURL, testChartName)
 	if err != nil {
 		t.Fatalf("ListChartVersions() error = %v", err)
 	}
@@ -74,7 +75,7 @@ func TestListChartVersions(t *testing.T) {
 
 func TestGetChartLatestVersion(t *testing.T) {
 	client := newTestClient(t)
-	version, err := client.GetChartLatestVersion(testRepoURL, testChartName)
+	version, err := client.GetChartLatestVersion(context.Background(), testRepoURL, testChartName)
 	if err != nil {
 		t.Fatalf("GetChartLatestVersion() error = %v", err)
 	}
@@ -97,7 +98,7 @@ func TestGetChartLatestVersionSkipsPrereleases(t *testing.T) {
 		repos:   map[string]*cachedRepo{repoURL: {repo: &repo.ChartRepository{IndexFile: idx}, fetched: time.Now()}},
 	}
 
-	version, err := client.GetChartLatestVersion(repoURL, "app")
+	version, err := client.GetChartLatestVersion(context.Background(), repoURL, "app")
 	if err != nil {
 		t.Fatalf("GetChartLatestVersion() error = %v", err)
 	}
@@ -110,12 +111,12 @@ func TestGetChartValues(t *testing.T) {
 	client := newTestClient(t)
 
 	// Get the latest version first
-	version, err := client.GetChartLatestVersion(testRepoURL, testChartName)
+	version, err := client.GetChartLatestVersion(context.Background(), testRepoURL, testChartName)
 	if err != nil {
 		t.Fatalf("GetChartLatestVersion() error = %v", err)
 	}
 
-	values, err := client.GetChartValues(testRepoURL, testChartName, version)
+	values, err := client.GetChartValues(context.Background(), testRepoURL, testChartName, version)
 	if err != nil {
 		t.Fatalf("GetChartValues() error = %v", err)
 	}
@@ -131,7 +132,7 @@ func TestGetChartValues(t *testing.T) {
 
 func TestGetChartLatestValues(t *testing.T) {
 	client := newTestClient(t)
-	values, err := client.GetChartLatestValues(testRepoURL, testChartName)
+	values, err := client.GetChartLatestValues(context.Background(), testRepoURL, testChartName)
 	if err != nil {
 		t.Fatalf("GetChartLatestValues() error = %v", err)
 	}
@@ -144,13 +145,13 @@ func TestGetChartContents(t *testing.T) {
 	client := newTestClient(t)
 
 	// Get the latest version first
-	version, err := client.GetChartLatestVersion(testRepoURL, testChartName)
+	version, err := client.GetChartLatestVersion(context.Background(), testRepoURL, testChartName)
 	if err != nil {
 		t.Fatalf("GetChartLatestVersion() error = %v", err)
 	}
 
 	// Test without recursion
-	contents, err := client.GetChartContents(testRepoURL, testChartName, version, false, nil)
+	contents, err := client.GetChartContents(context.Background(), testRepoURL, testChartName, version, false, nil)
 	if err != nil {
 		t.Fatalf("GetChartContents(recursive=false) error = %v", err)
 	}
@@ -159,7 +160,7 @@ func TestGetChartContents(t *testing.T) {
 	}
 
 	// Test with recursion
-	contentsRecursive, err := client.GetChartContents(testRepoURL, testChartName, version, true, nil)
+	contentsRecursive, err := client.GetChartContents(context.Background(), testRepoURL, testChartName, version, true, nil)
 	if err != nil {
 		t.Fatalf("GetChartContents(recursive=true) error = %v", err)
 	}
@@ -177,12 +178,12 @@ func TestGetChartDependencies(t *testing.T) {
 	client := newTestClient(t)
 
 	// Get the latest version first
-	version, err := client.GetChartLatestVersion(testRepoURL, testChartName)
+	version, err := client.GetChartLatestVersion(context.Background(), testRepoURL, testChartName)
 	if err != nil {
 		t.Fatalf("GetChartLatestVersion() error = %v", err)
 	}
 
-	deps, err := client.GetChartDependencies(testRepoURL, testChartName, version)
+	deps, err := client.GetChartDependencies(context.Background(), testRepoURL, testChartName, version)
 	if err != nil {
 		t.Fatalf("GetChartDependencies() error = %v", err)
 	}
@@ -198,12 +199,12 @@ func TestGetChartImages(t *testing.T) {
 	client := newTestClient(t)
 
 	// Get the latest version first
-	version, err := client.GetChartLatestVersion(testRepoURL, testChartName)
+	version, err := client.GetChartLatestVersion(context.Background(), testRepoURL, testChartName)
 	if err != nil {
 		t.Fatalf("GetChartLatestVersion() error = %v", err)
 	}
 
-	images, err := client.GetChartImages(t.Context(), testRepoURL, testChartName, version, nil, false)
+	images, err := client.GetChartImages(context.Background(), testRepoURL, testChartName, version, nil, false)
 	if err != nil {
 		t.Fatalf("GetChartImages() error = %v", err)
 	}
@@ -295,7 +296,7 @@ func TestExtractChartNameFromOCI(t *testing.T) {
 
 func TestListChartsOCI(t *testing.T) {
 	client := newTestClient(t)
-	charts, err := client.ListCharts(testOCIRepoURL)
+	charts, err := client.ListCharts(context.Background(), testOCIRepoURL)
 	if err != nil {
 		t.Fatalf("ListCharts() error = %v", err)
 	}
@@ -311,7 +312,7 @@ func TestListChartsOCI(t *testing.T) {
 
 func TestListChartVersionsOCI(t *testing.T) {
 	client := newTestClient(t)
-	versions, err := client.ListChartVersions(testOCIRepoURL, testOCIChartName)
+	versions, err := client.ListChartVersions(context.Background(), testOCIRepoURL, testOCIChartName)
 	if err != nil {
 		t.Fatalf("ListChartVersions() error = %v", err)
 	}
@@ -323,7 +324,7 @@ func TestListChartVersionsOCI(t *testing.T) {
 
 func TestGetChartLatestVersionOCI(t *testing.T) {
 	client := newTestClient(t)
-	version, err := client.GetChartLatestVersion(testOCIRepoURL, testOCIChartName)
+	version, err := client.GetChartLatestVersion(context.Background(), testOCIRepoURL, testOCIChartName)
 	if err != nil {
 		t.Fatalf("GetChartLatestVersion() error = %v", err)
 	}
@@ -336,12 +337,12 @@ func TestGetChartLatestVersionOCI(t *testing.T) {
 func TestGetChartValuesOCI(t *testing.T) {
 	client := newTestClient(t)
 
-	version, err := client.GetChartLatestVersion(testOCIRepoURL, testOCIChartName)
+	version, err := client.GetChartLatestVersion(context.Background(), testOCIRepoURL, testOCIChartName)
 	if err != nil {
 		t.Fatalf("GetChartLatestVersion() error = %v", err)
 	}
 
-	values, err := client.GetChartValues(testOCIRepoURL, testOCIChartName, version)
+	values, err := client.GetChartValues(context.Background(), testOCIRepoURL, testOCIChartName, version)
 	if err != nil {
 		t.Fatalf("GetChartValues() error = %v", err)
 	}

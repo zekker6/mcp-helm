@@ -190,7 +190,7 @@ func TestHTTPRepoRetry(t *testing.T) {
 			serverURL = server.URL
 
 			client := newTestClient(t)
-			values, err := client.GetChartValues(server.URL, "test-chart", "1.0.0")
+			values, err := client.GetChartValues(context.Background(), server.URL, "test-chart", "1.0.0")
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("GetChartValues() expected error")
@@ -233,7 +233,7 @@ func TestOCIRegistryRetry(t *testing.T) {
 	}
 
 	repoURL := "oci://" + strings.TrimPrefix(server.URL, "http://") + "/org/test-chart"
-	versions, err := client.ListChartVersions(repoURL, "")
+	versions, err := client.ListChartVersions(context.Background(), repoURL, "")
 	if err != nil {
 		t.Fatalf("ListChartVersions() error = %v", err)
 	}

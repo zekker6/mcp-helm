@@ -28,12 +28,12 @@ func NewGetChartValuesTool() mcp.Tool {
 
 func GetChartValuesHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		params, errResult := ExtractCommonParams(request, c, true)
+		params, errResult := ExtractCommonParams(ctx, request, c, true)
 		if errResult != nil {
 			return errResult, nil
 		}
 
-		values, err := c.GetChartValues(params.RepositoryURL, params.ChartName, params.ChartVersion)
+		values, err := c.GetChartValues(ctx, params.RepositoryURL, params.ChartName, params.ChartVersion)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to get chart values: %v", err)), nil
 		}

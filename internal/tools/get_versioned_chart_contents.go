@@ -36,7 +36,7 @@ func NewGetChartContentsTool() mcp.Tool {
 
 func GetChartContentsHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		params, errResult := ExtractCommonParams(request, c, true)
+		params, errResult := ExtractCommonParams(ctx, request, c, true)
 		if errResult != nil {
 			return errResult, nil
 		}
@@ -44,7 +44,7 @@ func GetChartContentsHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 		recursive := request.GetBool("recursive", false)
 		paths := request.GetStringSlice("paths", nil)
 
-		charts, err := c.GetChartContents(params.RepositoryURL, params.ChartName, params.ChartVersion, recursive, paths)
+		charts, err := c.GetChartContents(ctx, params.RepositoryURL, params.ChartName, params.ChartVersion, recursive, paths)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list charts: %v", err)), nil
 		}

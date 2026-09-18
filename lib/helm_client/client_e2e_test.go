@@ -1,6 +1,7 @@
 package helm_client
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -302,7 +303,7 @@ func TestRepositoryAuthMatrix(t *testing.T) {
 			}
 
 			// 1) Index / tags path.
-			versions, err := client.ListChartVersions(repoURL, chartName)
+			versions, err := client.ListChartVersions(context.Background(), repoURL, chartName)
 			if err != nil {
 				t.Fatalf("ListChartVersions() error = %v", err)
 			}
@@ -313,7 +314,7 @@ func TestRepositoryAuthMatrix(t *testing.T) {
 			// 2) Chart-binary download / OCI pull path. This is where the
 			//    reported bug bites for HTTP + auth: the index succeeded above,
 			//    but the .tgz fetch is performed without credentials.
-			values, err := client.GetChartValues(repoURL, chartName, matrixVersion)
+			values, err := client.GetChartValues(context.Background(), repoURL, chartName, matrixVersion)
 			if err != nil {
 				t.Fatalf("GetChartValues() error = %v", err)
 			}
@@ -383,7 +384,7 @@ func TestCombinedCredentialsRouting(t *testing.T) {
 	t.Run("covered host uses credentials file", func(t *testing.T) {
 		repoURL := "oci://" + coveredHost + "/charts/" + matrixChart
 
-		versions, err := client.ListChartVersions(repoURL, "")
+		versions, err := client.ListChartVersions(context.Background(), repoURL, "")
 		if err != nil {
 			t.Fatalf("ListChartVersions() error = %v (credentials-file identity should have been used)", err)
 		}
@@ -391,7 +392,7 @@ func TestCombinedCredentialsRouting(t *testing.T) {
 			t.Fatalf("expected version %q in %v", matrixVersion, versions)
 		}
 
-		values, err := client.GetChartValues(repoURL, "", matrixVersion)
+		values, err := client.GetChartValues(context.Background(), repoURL, "", matrixVersion)
 		if err != nil {
 			t.Fatalf("GetChartValues() error = %v", err)
 		}
@@ -406,7 +407,7 @@ func TestCombinedCredentialsRouting(t *testing.T) {
 	t.Run("uncovered host falls back to basic auth", func(t *testing.T) {
 		repoURL := "oci://" + fallbackHost + "/charts/" + matrixChart
 
-		versions, err := client.ListChartVersions(repoURL, "")
+		versions, err := client.ListChartVersions(context.Background(), repoURL, "")
 		if err != nil {
 			t.Fatalf("ListChartVersions() error = %v (basic-auth fallback should have been used)", err)
 		}
@@ -414,7 +415,7 @@ func TestCombinedCredentialsRouting(t *testing.T) {
 			t.Fatalf("expected version %q in %v", matrixVersion, versions)
 		}
 
-		values, err := client.GetChartValues(repoURL, "", matrixVersion)
+		values, err := client.GetChartValues(context.Background(), repoURL, "", matrixVersion)
 		if err != nil {
 			t.Fatalf("GetChartValues() error = %v", err)
 		}

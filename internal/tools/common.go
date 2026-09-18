@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -21,7 +22,7 @@ type CommonParams struct {
 //
 // For OCI URLs, chart_name is optional - if not provided, it will be extracted from the URL.
 // For HTTP repositories, chart_name is required.
-func ExtractCommonParams(request mcp.CallToolRequest, c *helm_client.HelmClient, resolveLatestVersion bool) (*CommonParams, *mcp.CallToolResult) {
+func ExtractCommonParams(ctx context.Context, request mcp.CallToolRequest, c *helm_client.HelmClient, resolveLatestVersion bool) (*CommonParams, *mcp.CallToolResult) {
 	repositoryURL, err := request.RequireString("repository_url")
 	if err != nil {
 		return nil, mcp.NewToolResultError(err.Error())
@@ -48,7 +49,7 @@ func ExtractCommonParams(request mcp.CallToolRequest, c *helm_client.HelmClient,
 
 	chartVersion := request.GetString("chart_version", "")
 	if chartVersion == "" && resolveLatestVersion {
-		chartVersion, err = c.GetChartLatestVersion(repositoryURL, chartName)
+		chartVersion, err = c.GetChartLatestVersion(ctx, repositoryURL, chartName)
 		if err != nil {
 			return nil, mcp.NewToolResultError(fmt.Sprintf("failed to get the latest chart version: %v", err))
 		}

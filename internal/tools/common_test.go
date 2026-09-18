@@ -1,9 +1,16 @@
 package tools
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/zekker6/mcp-helm/lib/helm_client"
 )
@@ -120,7 +127,7 @@ func TestExtractCommonParams(t *testing.T) {
 				},
 			}
 
-			params, errResult := ExtractCommonParams(request, client, tt.resolveLatestVersion)
+			params, errResult := ExtractCommonParams(context.Background(), request, client, tt.resolveLatestVersion)
 
 			if tt.wantError {
 				if errResult == nil {
@@ -253,4 +260,90 @@ func containsString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// startChartRepo serves an index.yaml holding one chart with two versions, so
+// latest-version resolution has something to resolve without leaving the
+// machine.
+func startChartRepo(t *testing.T) string {
+	t.Helper()
+
+	const index = `apiVersion: v1
+entries:
+  mychart:
+    - name: mychart
+      version: 1.0.0
+      urls: ["charts/mychart-1.0.0.tgz"]
+    - name: mychart
+      version: 2.0.0
+      urls: ["charts/mychart-2.0.0.tgz"]
+`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/index.yaml" {
+			http.NotFound(w, r)
+
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/x-yaml")
+		_, _ = w.Write([]byte(index))
+	}))
+	t.Cleanup(server.Close)
+
+	return server.URL
+}
+
+// TestExtractCommonParamsResolvesLatestVersionUnderCallerSpan covers the reason
+// ctx is a parameter: with context.Background() the resolution would start its
+// own root trace, and a tool call omitting chart_version would lose the Helm
+// work from its own.
+func TestExtractCommonParamsResolvesLatestVersionUnderCallerSpan(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(noop.NewTracerProvider()) })
+
+	client, err := helm_client.NewClient()
+	if err != nil {
+		t.Fatalf("failed to create helm client: %v", err)
+	}
+
+	ctx, parent := provider.Tracer("test").Start(context.Background(), "tool.probe")
+
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "test_tool",
+			Arguments: map[string]any{
+				"repository_url": startChartRepo(t),
+				"chart_name":     "mychart",
+			},
+		},
+	}
+
+	params, errResult := ExtractCommonParams(ctx, request, client, true)
+	parent.End()
+
+	if errResult != nil {
+		t.Fatalf("ExtractCommonParams returned an error result: %+v", errResult)
+	}
+	if params.ChartVersion != "2.0.0" {
+		t.Errorf("ChartVersion = %q, want the latest %q", params.ChartVersion, "2.0.0")
+	}
+
+	var found bool
+	for _, span := range recorder.Ended() {
+		if span.Name() != "helm.get_latest_version" {
+			continue
+		}
+
+		found = true
+		if span.Parent().SpanID() != parent.SpanContext().SpanID() {
+			t.Errorf("helm.get_latest_version parent = %s, want the caller span %s",
+				span.Parent().SpanID(), parent.SpanContext().SpanID())
+		}
+	}
+	if !found {
+		t.Fatal("no helm.get_latest_version span recorded")
+	}
 }

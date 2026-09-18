@@ -1,6 +1,7 @@
 package helm_client
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -78,7 +79,7 @@ func TestRepoIndexRefresh(t *testing.T) {
 				t.Fatalf("NewClient() error = %v", err)
 			}
 
-			if _, err := client.ListChartVersions(server.URL, "test-chart"); err != nil {
+			if _, err := client.ListChartVersions(context.Background(), server.URL, "test-chart"); err != nil {
 				t.Fatalf("first ListChartVersions() error = %v", err)
 			}
 
@@ -92,7 +93,7 @@ func TestRepoIndexRefresh(t *testing.T) {
 				client.reposMu.Unlock()
 			}
 
-			got, err := client.ListChartVersions(server.URL, "test-chart")
+			got, err := client.ListChartVersions(context.Background(), server.URL, "test-chart")
 			if err != nil {
 				t.Fatalf("second ListChartVersions() error = %v", err)
 			}

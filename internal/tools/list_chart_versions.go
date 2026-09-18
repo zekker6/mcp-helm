@@ -26,12 +26,12 @@ func NewListChartVersionsTool() mcp.Tool {
 
 func GetListChartVersionsHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		params, errResult := ExtractCommonParams(request, c, false)
+		params, errResult := ExtractCommonParams(ctx, request, c, false)
 		if errResult != nil {
 			return errResult, nil
 		}
 
-		versions, err := c.ListChartVersions(params.RepositoryURL, params.ChartName)
+		versions, err := c.ListChartVersions(ctx, params.RepositoryURL, params.ChartName)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list chart versions: %v", err)), nil
 		}

@@ -25,12 +25,12 @@ func NewGetLatestVersionOfChartTool() mcp.Tool {
 
 func GetLatestVersionOfCharHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		params, errResult := ExtractCommonParams(request, c, false)
+		params, errResult := ExtractCommonParams(ctx, request, c, false)
 		if errResult != nil {
 			return errResult, nil
 		}
 
-		version, err := c.GetChartLatestVersion(params.RepositoryURL, params.ChartName)
+		version, err := c.GetChartLatestVersion(ctx, params.RepositoryURL, params.ChartName)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list charts: %v", err)), nil
 		}

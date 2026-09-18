@@ -1,6 +1,7 @@
 package helm_client
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
 // Minimal index.yaml structure for testing
@@ -73,7 +76,7 @@ func TestBasicAuthRequired(t *testing.T) {
 			t.Fatalf("NewClient() error = %v", err)
 		}
 
-		_, err = client.ListCharts(server.URL)
+		_, err = client.ListCharts(context.Background(), server.URL)
 		if err == nil {
 			t.Error("expected error when accessing protected repo without auth")
 		}
@@ -85,7 +88,7 @@ func TestBasicAuthRequired(t *testing.T) {
 			t.Fatalf("NewClient() error = %v", err)
 		}
 
-		_, err = client.ListCharts(server.URL)
+		_, err = client.ListCharts(context.Background(), server.URL)
 		if err == nil {
 			t.Error("expected error when accessing protected repo with wrong credentials")
 		}
@@ -97,7 +100,7 @@ func TestBasicAuthRequired(t *testing.T) {
 			t.Fatalf("NewClient() error = %v", err)
 		}
 
-		charts, err := client.ListCharts(server.URL)
+		charts, err := client.ListCharts(context.Background(), server.URL)
 		if err != nil {
 			t.Fatalf("ListCharts() error = %v", err)
 		}
@@ -138,7 +141,7 @@ func TestInsecureSkipTLSVerify(t *testing.T) {
 			t.Fatalf("NewClient() error = %v", err)
 		}
 
-		_, err = client.ListCharts(server.URL)
+		_, err = client.ListCharts(context.Background(), server.URL)
 		if err == nil {
 			t.Error("expected TLS verification error with self-signed cert")
 		}
@@ -150,7 +153,7 @@ func TestInsecureSkipTLSVerify(t *testing.T) {
 			t.Fatalf("NewClient() error = %v", err)
 		}
 
-		charts, err := client.ListCharts(server.URL)
+		charts, err := client.ListCharts(context.Background(), server.URL)
 		if err != nil {
 			t.Fatalf("ListCharts() error = %v", err)
 		}
@@ -202,7 +205,7 @@ func TestCredentialsFile(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	_, err = client.ListCharts(serverURL)
+	_, err = client.ListCharts(context.Background(), serverURL)
 	if err != nil {
 		t.Fatalf("ListCharts() error = %v", err)
 	}
@@ -274,7 +277,7 @@ func TestOCIRegistryRouting(t *testing.T) {
 			{"oci://ghcr.io/org/chart", false},                 // not in creds file -> basic auth
 		}
 		for _, tc := range cases {
-			got := client.registryClientFor(tc.repoURL)
+			got := client.registryClientFor(context.Background(), tc.repoURL)
 			if tc.wantCred && got != client.registryClientCreds {
 				t.Errorf("%s: expected credentials-file client", tc.repoURL)
 			}
@@ -298,7 +301,7 @@ func TestOCIRegistryRouting(t *testing.T) {
 			t.Fatalf("NewClient() error = %v", err)
 		}
 
-		if got := client.registryClientFor("oci://docker.io/library/mysql"); got != client.registryClient {
+		if got := client.registryClientFor(context.Background(), "oci://docker.io/library/mysql"); got != client.registryClient {
 			t.Error("expected basic-auth fallback for a non-resolvable bare docker.io key")
 		}
 	})
@@ -317,7 +320,7 @@ func TestOCIRegistryRouting(t *testing.T) {
 			t.Fatalf("NewClient() error = %v", err)
 		}
 
-		if got := client.registryClientFor("oci://registry.invalid.test/org/chart"); got != client.registryClient {
+		if got := client.registryClientFor(context.Background(), "oci://registry.invalid.test/org/chart"); got != client.registryClient {
 			t.Error("expected basic-auth fallback when the credential helper is unavailable")
 		}
 	})
@@ -330,7 +333,7 @@ func TestOCIRegistryRouting(t *testing.T) {
 		if client.registryClientCreds != nil {
 			t.Error("did not expect a separate credentials-file client without -registry-credentials")
 		}
-		if client.registryClientFor("oci://any.example.com/org/chart") != client.registryClient {
+		if client.registryClientFor(context.Background(), "oci://any.example.com/org/chart") != client.registryClient {
 			t.Error("expected the single registry client for all hosts")
 		}
 	})
@@ -345,7 +348,7 @@ func TestOCIRegistryRouting(t *testing.T) {
 		if client.registryClientCreds != nil {
 			t.Error("did not expect routing without basic auth")
 		}
-		if client.registryClientFor("oci://registry.example.com/org/chart") != client.registryClient {
+		if client.registryClientFor(context.Background(), "oci://registry.example.com/org/chart") != client.registryClient {
 			t.Error("expected the single registry client for all hosts")
 		}
 	})
@@ -413,7 +416,7 @@ func TestCombinedOptions(t *testing.T) {
 			t.Fatalf("NewClient() error = %v", err)
 		}
 
-		_, err = client.ListCharts(server.URL)
+		_, err = client.ListCharts(context.Background(), server.URL)
 		if err == nil {
 			t.Error("expected TLS verification error")
 		}
@@ -425,7 +428,7 @@ func TestCombinedOptions(t *testing.T) {
 			t.Fatalf("NewClient() error = %v", err)
 		}
 
-		_, err = client.ListCharts(server.URL)
+		_, err = client.ListCharts(context.Background(), server.URL)
 		if err == nil {
 			t.Error("expected auth error")
 		}
@@ -440,7 +443,7 @@ func TestCombinedOptions(t *testing.T) {
 			t.Fatalf("NewClient() error = %v", err)
 		}
 
-		charts, err := client.ListCharts(server.URL)
+		charts, err := client.ListCharts(context.Background(), server.URL)
 		if err != nil {
 			t.Fatalf("ListCharts() error = %v", err)
 		}
@@ -448,5 +451,83 @@ func TestCombinedOptions(t *testing.T) {
 		if len(charts) == 0 {
 			t.Error("expected at least one chart")
 		}
+	})
+}
+
+// ctxProbeStore records the context of the most recent Get so a test can assert
+// the caller's context reaches the credential lookup instead of a detached one.
+type ctxProbeStore struct {
+	got context.Context
+}
+
+func (s *ctxProbeStore) Get(ctx context.Context, _ string) (auth.Credential, error) {
+	s.got = ctx
+	return auth.EmptyCredential, nil
+}
+
+func (s *ctxProbeStore) Put(context.Context, string, auth.Credential) error { return nil }
+
+func (s *ctxProbeStore) Delete(context.Context, string) error { return nil }
+
+type ctxProbeKey struct{}
+
+func TestCredentialLookupUsesCallerContext(t *testing.T) {
+	newProbedClient := func(t *testing.T, host string) (*HelmClient, *ctxProbeStore) {
+		t.Helper()
+		client, err := NewClient(
+			WithBasicAuth("user", "pass"),
+			WithCredentialsFile(writeDockerConfig(t, host)),
+			WithPlainHTTP(true),
+		)
+		if err != nil {
+			t.Fatalf("NewClient() error = %v", err)
+		}
+		probe := &ctxProbeStore{}
+		client.credStore = probe
+		return client, probe
+	}
+
+	assertProbed := func(t *testing.T, probe *ctxProbeStore) {
+		t.Helper()
+		if probe.got == nil {
+			t.Fatal("credential store was never consulted")
+		}
+		if probe.got.Value(ctxProbeKey{}) != "marker" {
+			t.Error("credential lookup did not receive the caller's context")
+		}
+	}
+
+	ctx := context.WithValue(context.Background(), ctxProbeKey{}, "marker")
+
+	t.Run("registryClientFor", func(t *testing.T) {
+		client, probe := newProbedClient(t, "registry.example.com")
+
+		client.registryClientFor(ctx, "oci://registry.example.com/org/chart")
+
+		assertProbed(t, probe)
+	})
+
+	// The routing decision is made behind the exported methods, so this covers
+	// the full chain rather than only the helper that performs the lookup.
+	t.Run("ListChartVersions", func(t *testing.T) {
+		host := startOCIRegistry(t, "user", "pass", buildMatrixChartTGZ(t))
+		client, probe := newProbedClient(t, host)
+
+		if _, err := client.ListChartVersions(ctx, "oci://"+host+"/charts/"+matrixChart, ""); err != nil {
+			t.Fatalf("ListChartVersions() error = %v", err)
+		}
+
+		assertProbed(t, probe)
+	})
+
+	t.Run("GetChartValues", func(t *testing.T) {
+		host := startOCIRegistry(t, "user", "pass", buildMatrixChartTGZ(t))
+		client, probe := newProbedClient(t, host)
+
+		if _, err := client.GetChartValues(ctx, "oci://"+host+"/charts/"+matrixChart, "", matrixVersion); err != nil {
+			t.Fatalf("GetChartValues() error = %v", err)
+		}
+
+		assertProbed(t, probe)
 	})
 }

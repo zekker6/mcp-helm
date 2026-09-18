@@ -44,7 +44,7 @@ type chartImagesResult struct {
 
 func GetChartImagesHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		params, errResult := ExtractCommonParams(request, c, true)
+		params, errResult := ExtractCommonParams(ctx, request, c, true)
 		if errResult != nil {
 			return errResult, nil
 		}

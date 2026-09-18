@@ -27,7 +27,7 @@ func GetListChartsHandler(c *helm_client.HelmClient) server.ToolHandlerFunc {
 			return errResult, nil
 		}
 
-		charts, err := c.ListCharts(repositoryURL)
+		charts, err := c.ListCharts(ctx, repositoryURL)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list charts: %v", err)), nil
 		}
