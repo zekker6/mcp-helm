@@ -459,7 +459,7 @@ func TestBinaryFlushesFullTraceOnSIGTERM(t *testing.T) {
 		"helm.load_chart",
 		"helm.get_chart_values",
 		"tool.get_chart_values",
-		"mcp.tools/call",
+		"tools/call get_chart_values",
 		"POST " + streamableEndpointPath,
 	}
 	if got := ancestry(t, spans, "helm.oci.pull"); !slices.Equal(got, want) {
@@ -552,7 +552,7 @@ func assertMetricsCarryNoChartIdentifiers(t *testing.T, col *logCollector) {
 		}
 	}
 
-	for _, want := range []string{"mcp.server.operation.duration", "cloud.zekker.helm.operation.duration"} {
+	for _, want := range []string{"mcp.server.operation.duration", "mcp_helm.helm.operation.duration"} {
 		if !names[want] {
 			t.Errorf("%s was never exported, got %v", want, sortedKeys(names))
 		}

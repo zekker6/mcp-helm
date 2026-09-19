@@ -5,7 +5,6 @@ go 1.27.0
 require (
 	github.com/gobwas/glob v1.0.0
 	github.com/mark3labs/mcp-go v1.1.0
-	github.com/mark3labs/mcp-go/otel v0.54.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	go.opentelemetry.io/contrib/bridges/otelzap v0.20.1

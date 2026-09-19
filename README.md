@@ -268,6 +268,9 @@ instrumentation is installed, so the binary behaves exactly as it does today.
 | `OTEL_EXPORTER_OTLP_TIMEOUT`         | `10000`        | Export timeout in milliseconds. Read by the SDK exporters                                            |
 | `OTEL_EXPORTER_OTLP_COMPRESSION`     | -              | Set to `gzip` to compress exports. Read by the SDK exporters                                         |
 | `OTEL_METRIC_EXPORT_INTERVAL`        | `60000`        | Metric export interval in milliseconds                                                               |
+| `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION` | `base2_exponential_bucket_histogram` | Histogram aggregation for both OTLP transports. Set to `explicit_bucket_histogram` for classic buckets |
+| `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` | `cumulative` | Counters and histograms accumulate since their start or reset. The SDK also accepts `delta` and `lowmemory` |
+| `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`  | `4096`         | Longest span attribute value; longer ones are truncated. The SDK default is unlimited, but several values come from clients. `OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT` takes precedence, and `-1` lifts the cap |
 | `OTEL_EXPORTER_OTLP_CERTIFICATE`     | system roots   | PEM CA bundle used to verify a `https://` or `grpcs://` collector. Read by the SDK exporters         |
 | `OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE` | -           | PEM client certificate for mTLS to the collector. Read by the SDK exporters                          |
 | `OTEL_EXPORTER_OTLP_CLIENT_KEY`      | -              | PEM client key for mTLS to the collector. Read by the SDK exporters                                  |
@@ -367,7 +370,7 @@ A tool call over HTTP produces one trace from the inbound request down to the He
 
 ```
 POST /mcp                       (HTTP server span)
-  mcp.tools/call                (MCP protocol span)
+  tools/call get_chart_images   (MCP server span)
     tool.get_chart_images       (MCP tool span)
       helm.get_chart_images     (Helm operation span)
         helm.load_chart
@@ -375,16 +378,18 @@ POST /mcp                       (HTTP server span)
         helm.parse.images
 ```
 
-The Helm-specific attributes below are written without their `cloud.zekker.helm.` prefix for readability - the emitted
-names carry it. That is this project's namespace: the OpenTelemetry naming rules reserve unprefixed names for the
-specification, and no registry attribute covers a Helm repository or chart. Attributes that do come from the registry
-(`url.full`, `server.address`, `server.port`, `error.type`, `gen_ai.*`, `mcp.*`) are shown in full.
+Custom telemetry names use the application-specific `mcp_helm.*` namespace, without a personal domain. The
+Helm-specific attributes below omit their `mcp_helm.helm.` prefix for readability; emitted names include it.
+[OpenTelemetry naming guidance](https://opentelemetry.io/docs/specs/semconv/general/naming/#recommendations-for-application-developers)
+recommends avoiding collisions with standard namespaces, not a mandatory reverse-DNS prefix. Registry attributes
+(`url.full`, `server.address`, `server.port`, `error.type`, `gen_ai.*`, `mcp.*`, `jsonrpc.*`, `rpc.*`) are shown in full.
+Existing queries using the previous custom namespace must be updated; standard OTel names are unchanged.
 
 | Span                          | Kind     | Attributes                                                                                   |
 |-------------------------------|----------|----------------------------------------------------------------------------------------------|
-| `<METHOD> <route>`            | server   | `otelhttp` HTTP server semantic conventions. Only in `sse` and `http` modes                  |
-| `mcp.<method>`                | server   | `mcp.method`, `mcp.session.id`, `mcp.protocol.version` (set by mcp-go)                       |
-| `tool.<name>`                 | internal | `gen_ai.tool.name`, `gen_ai.operation.name`, `mcp.method.name`                                |
+| `<METHOD> <route>`            | server   | `otelhttp` HTTP server semantic conventions, plus the JSON-RPC message a POST carried (below). Only in `sse` and `http` modes |
+| `<mcp method> [<tool>]`       | server   | `mcp.method.name`, `jsonrpc.request.id`, `gen_ai.tool.name`, `gen_ai.operation.name`, `mcp.session.id`, `mcp.protocol.version`, `network.transport`, `network.protocol.name`, `rpc.response.status_code`, `error.type` |
+| `tool.<name>`                 | internal | -                                                                                            |
 | `helm.list_charts`            | internal | `repository.url`, `repository.type`, `chart.count`                                            |
 | `helm.list_chart_versions`    | internal | + `chart.name`, `version.count`                                                               |
 | `helm.get_latest_version`     | internal | + `chart.name`, `chart.version` (resolved)                                                    |
@@ -408,37 +413,80 @@ The `helm.chart.download` span reports `url.full` because the chart URL is the e
 `helm.repo.index` does not: the Helm getter resolves the index path itself, so the URL this server holds is not the one
 requested.
 
-mcp-go labels its own spans with `mcp.method` and `mcp.tool.name`, which the registry has since deprecated in favour of
-`mcp.method.name` and `gen_ai.tool.name`. The current names are added to the `tool.<name>` span by this server, so both
-are present there; `mcp.<method>` spans carry only what mcp-go sets.
+The MCP server span follows the [MCP semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/mcp.md):
+it is named `{mcp.method.name} {target}`, such as `tools/call get_chart_values`, `tools/list` or `ping`. Only a
+registered tool becomes the target, since the client picks the name; an unregistered one still reaches
+`gen_ai.tool.name`. A method mcp-go does not implement is recorded as `mcp.method.name=_OTHER` on a span named `MCP`, the
+way HTTP instrumentation treats an unknown method, so a client cannot mint a span name per request. The server traces
+through its own adapter for mcp-go's tracing interface rather than `github.com/mark3labs/mcp-go/otel`, and leaves out
+the `mcp.method` and `mcp.tool.name` keys mcp-go sets: the registry defines neither. Unknown-method spans currently
+omit `jsonrpc.request.id` because mcp-go does not expose the ID to the tracer or error hooks on that path.
+The [deferred fix](docs/backlog/unknown-mcp-method-request-id.md) requires upstream API support.
+
+`mcp.protocol.version` records the request's effective version only when mcp-go recognizes it. Unsupported metadata
+values and raw protocol headers are not copied into spans or metrics. `network.transport` is `tcp` in `sse` and
+`http` modes, alongside `network.protocol.name=http`, and `pipe` in `stdio` mode.
+
+A request answered with a JSON-RPC error carries the code in `rpc.response.status_code`. The conventions attribute
+`-32700`, `-32600`, `-32601`, `-32602` (which includes an unknown tool) and `-32002` to the caller, so those leave
+`error.type` unset and the span status `UNSET`. Any other code sets `error.type` to the code and the status to `ERROR`,
+described by the JSON-RPC error message. A tool handler that reported the failure to its caller rather than returning
+an error sets `error.type` to `tool_error`, also with an `ERROR` status.
+
+Each recording POST span also records which JSON-RPC message its body carried, as `mcp_helm.jsonrpc.message.kind`
+(`request`, `notification` or `response`). A notification adds `mcp.method.name`, `_OTHER` for a method the registry
+does not list, and a response adds `jsonrpc.request.id`. mcp-go opens an MCP span only for the requests it dispatches,
+so for notifications and for a client's replies to server pings, which are most of the POSTs an idle session sends, the
+HTTP span is the only record. A request's method and id stay on its MCP span, so a query on them counts each request
+once. Annotation capture is limited to 64 KiB; larger bodies are not parsed or annotated. Nonrecording spans skip
+capture entirely. These limits affect telemetry only: the transport still receives the original body and read errors.
 
 Incoming W3C `traceparent` / `tracestate` headers are honoured in `sse` and `http` modes, so a tool call joins the
-caller's trace instead of starting a new one. In `stdio` mode each MCP message is a root span.
+caller's trace instead of starting a new one. Trace context a client puts in a request's `params._meta` (SEP-414)
+parents the MCP server span in every mode, `stdio` included, since the conventions make the MCP client span its parent.
+When this replaces an existing transport context, the MCP span links to that context, preserving the connection to the
+HTTP span even across different traces. Absent or invalid metadata keeps the existing parent without an extra link.
+Without either, each MCP request in `stdio` mode is a root span.
 
 #### Metrics
 
 | Metric                                  | Kind      | Unit | Attributes                                                                   |
 |-----------------------------------------|-----------|------|------------------------------------------------------------------------------|
-| `mcp.server.operation.duration`         | histogram | `s`  | `mcp.method.name`, `gen_ai.tool.name`, `gen_ai.operation.name`, `error.type` |
-| `cloud.zekker.helm.operation.duration`  | histogram | `s`  | `…helm.operation`, `…helm.repository.type`, `error.type`                     |
+| `mcp.server.operation.duration`         | histogram | `s`  | `mcp.method.name`, `gen_ai.tool.name`, `gen_ai.operation.name`, `mcp.protocol.version`, `network.transport`, `network.protocol.name`, `rpc.response.status_code`, `error.type` |
+| `mcp_helm.helm.operation.duration`  | histogram | `s`  | `…helm.operation`, `…helm.repository.type`, `error.type`                     |
 | `http.server.*`                | from `otelhttp` | - | `http.server.request.duration`, `http.server.request.body.size`, `http.server.response.body.size`. `sse`/`http` modes only |
 | `go.*`                         | from the OTel runtime instrumentation | - | Go runtime memory, GC and goroutine metrics |
 
-`mcp.server.operation.duration` is the histogram the MCP semantic conventions define for the receiving side.
+`mcp.server.operation.duration` is the histogram the MCP semantic conventions define for the receiving side. It covers
+every request mcp-go opens a span for, from receipt until the response is ready, including the ones it answers with an
+error. Notifications are not measured, and neither is a message mcp-go refuses before that point (malformed JSON, a
+wrong `jsonrpc` version), since neither gets a span.
+
+All histograms, including MCP, Helm, HTTP and runtime histograms, default to base-2 exponential aggregation over
+both OTLP/HTTP and OTLP/gRPC. Buckets adapt to the recorded values, with a maximum of 160 buckets per positive or
+negative range and a maximum scale of 20. Metrics use cumulative temporality by default: repeated exports retain
+previous observations rather than reporting only the latest interval. Process restarts reset the cumulative values.
+
+The standard environment variables above can override either default independently. When explicit aggregation is
+selected, the MCP and Helm duration histograms use the recommended boundaries from 10 ms to 300 s. Ensure your
+Collector and backend accept exponential histograms; queries that require classic `_bucket` series may need updating.
 
 `error.type` is **absent on success**, which is what the conventions specify - do not filter on an `ok` value, filter on
-the attribute being unset. On a failure it holds the Go error type, except for a tool handler that reported the failure
-to its caller rather than returning an error (mcp-go delivers that as a successful response carrying an error result),
-where it is `tool_error`. A tool handler that panicked reports `_OTHER`. The histograms' `_count` series double as call
-rates, so there is no separate counter.
+the attribute being unset. On `mcp.server.operation.duration` it matches the span: the JSON-RPC error code unless the
+conventions attribute that code to the caller, or `tool_error` for a tool handler that reported the failure to its
+caller (mcp-go delivers that as a successful response carrying an error result). A panicking tool handler is answered
+with `-32603`. On `mcp_helm.helm.operation.duration` it holds the Go error type. Rates of the histograms' count
+values provide call rates, so there is no separate counter.
 
 Helm operations nest, and each level records its own point: `get_latest_values` wraps `get_latest_version` and
 `get_chart_values`, and any tool call that omits `chart_version` records `get_latest_version` before the operation it
-was asked for. Filter by `cloud.zekker.helm.operation` rather than summing `_count` across operations, or one logical
+was asked for. Filter by `mcp_helm.helm.operation` rather than summing histogram counts across operations, or one logical
 call is counted more than once.
 
 Metric attributes are deliberately low cardinality: repository URLs, chart names and chart versions appear on spans
-only, never on a metric. On the `http.server.*` metrics, `server.address` and `server.port` report `-httpListenAddr`
+only, never on a metric. `gen_ai.tool.name` is recorded for registered tools only and `mcp.method.name` falls back to
+`_OTHER`, so neither carries an arbitrary string from a client. Protocol versions are restricted to mcp-go's supported
+versions. On the `http.server.*` metrics, `server.address` and `server.port` report `-httpListenAddr`
 rather than the request's `Host` header, so an unauthenticated probe varying that header cannot open a series per
 value.
 
@@ -446,7 +494,9 @@ value.
 
 With telemetry enabled, log records are teed to the OTLP log exporter in addition to stderr. Both sinks honour
 `-logLevel`, so raising it keeps the filtered records off the wire as well as out of stderr. Each tool call also logs
-one INFO record with the tool name, duration and, on failure, `error.type`.
+one INFO record with the tool name, duration and, on failure, `error.type`. That record describes the handler rather
+than the JSON-RPC response: a returned error is named by its Go type, a failure reported to the caller is `tool_error`,
+and a panic is `_OTHER`.
 
 Every record emitted from a traced call site is correlated with its span, so logs, traces and metrics line up in the
 backend. The two sinks carry that correlation differently: the stderr line gets `trace_id` and `span_id` fields, while

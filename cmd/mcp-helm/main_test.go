@@ -390,12 +390,12 @@ func TestTelemetryFields(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"cloud.zekker.telemetry.traces.protocol":  "grpc",
-		"cloud.zekker.telemetry.traces.endpoint":  "collector:4317",
-		"cloud.zekker.telemetry.metrics.protocol": "http",
-		"cloud.zekker.telemetry.metrics.endpoint": "http://collector:4318/v1/metrics",
-		"cloud.zekker.telemetry.logs.protocol":    "http",
-		"cloud.zekker.telemetry.logs.endpoint":    "http://collector:4318/v1/logs",
+		"mcp_helm.telemetry.traces.protocol":  "grpc",
+		"mcp_helm.telemetry.traces.endpoint":  "collector:4317",
+		"mcp_helm.telemetry.metrics.protocol": "http",
+		"mcp_helm.telemetry.metrics.endpoint": "http://collector:4318/v1/metrics",
+		"mcp_helm.telemetry.logs.protocol":    "http",
+		"mcp_helm.telemetry.logs.endpoint":    "http://collector:4318/v1/logs",
 	}
 	for key, value := range want {
 		if got[key] != value {
@@ -411,6 +411,9 @@ const traceProbeTool = "trace_probe"
 // callToolMessage is a tools/call for traceProbeTool.
 const callToolMessage = `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` +
 	traceProbeTool + `","arguments":{}}}`
+
+// toolCallSpan is the MCP server span a callToolMessage produces.
+const toolCallSpan = "tools/call " + traceProbeTool
 
 // newRecordingTracerProvider returns a provider whose spans are kept in memory.
 func newRecordingTracerProvider(t *testing.T) (*sdktrace.TracerProvider, *tracetest.SpanRecorder) {
@@ -436,7 +439,13 @@ func passthroughMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 func newTracedServer(t *testing.T, enabled bool, tracer trace.Tracer, mw server.ToolHandlerMiddleware) *server.MCPServer {
 	t.Helper()
 
-	s := buildServer(nil, mcpServerOptions(enabled, tracer, mw)...)
+	instrumentation, err := telemetry.NewMCPInstrumentation(
+		tracer, sdkmetric.NewMeterProvider().Meter("test"), telemetry.TransportHTTP)
+	if err != nil {
+		t.Fatalf("build MCP instrumentation: %v", err)
+	}
+
+	s := buildServer(nil, mcpServerOptions(enabled, instrumentation, mw)...)
 	s.AddTool(
 		mcp.NewTool(traceProbeTool, mcp.WithDescription("records a span and returns")),
 		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -484,21 +493,21 @@ func TestBuildServerTracesToolCalls(t *testing.T) {
 	}
 
 	spans := sr.Ended()
-	message := spanNamed(t, spans, "mcp.tools/call")
+	message := spanNamed(t, spans, toolCallSpan)
 	tool := spanNamed(t, spans, "tool."+traceProbeTool)
 
 	if message.SpanKind() != trace.SpanKindServer {
-		t.Errorf("mcp.tools/call kind = %v, want server", message.SpanKind())
+		t.Errorf("tools/call kind = %v, want server", message.SpanKind())
 	}
 	if tool.Parent().SpanID() != message.SpanContext().SpanID() {
-		t.Fatalf("tool.%s parent = %s, want the mcp.tools/call span %s",
+		t.Fatalf("tool.%s parent = %s, want the tools/call span %s",
 			traceProbeTool, tool.Parent().SpanID(), message.SpanContext().SpanID())
 	}
 }
 
 // TestToolMiddlewareRunsInsideTheToolSpan pins the order mcpServerOptions
 // returns. mcp-go applies tool middlewares in reverse registration order, so
-// ours registered first would run around mcp.tools/call instead of inside
+// ours registered first would run around tools/call instead of inside
 // tool.<name>, and every per-call log line would name the wrong span.
 func TestToolMiddlewareRunsInsideTheToolSpan(t *testing.T) {
 	tp, sr := newRecordingTracerProvider(t)
@@ -519,7 +528,7 @@ func TestToolMiddlewareRunsInsideTheToolSpan(t *testing.T) {
 	}
 
 	spans := sr.Ended()
-	message := spanNamed(t, spans, "mcp.tools/call")
+	message := spanNamed(t, spans, toolCallSpan)
 	tool := spanNamed(t, spans, "tool."+traceProbeTool)
 
 	if seen.SpanID() == message.SpanContext().SpanID() {
@@ -547,7 +556,7 @@ func TestBuildServerRecordsNoSpansWhenTelemetryIsDisabled(t *testing.T) {
 
 // TestMCPSpanParentsToTheHTTPSpan pins the decision not to install an MCP
 // propagator: with one, mcp-go extracts the inbound traceparent and starts
-// mcp.tools/call under the remote span, a sibling of the otelhttp server span
+// tools/call under the remote span, a sibling of the otelhttp server span
 // rather than its child.
 func TestMCPSpanParentsToTheHTTPSpan(t *testing.T) {
 	tp, sr := newRecordingTracerProvider(t)
@@ -588,19 +597,19 @@ func TestMCPSpanParentsToTheHTTPSpan(t *testing.T) {
 	}
 
 	spans := sr.Ended()
-	message := spanNamed(t, spans, "mcp.tools/call")
+	message := spanNamed(t, spans, toolCallSpan)
 	// otelhttp names the server span after the request method.
 	httpSpan := spanNamed(t, spans, http.MethodPost)
 
 	if message.SpanContext().TraceID().String() != remoteTraceID {
-		t.Errorf("mcp.tools/call trace = %s, want the inbound trace %s",
+		t.Errorf("tools/call trace = %s, want the inbound trace %s",
 			message.SpanContext().TraceID(), remoteTraceID)
 	}
 	if message.Parent().SpanID().String() == remoteSpanID {
-		t.Fatal("mcp.tools/call parented to the remote span: an MCP propagator is installed")
+		t.Fatal("tools/call parented to the remote span: an MCP propagator is installed")
 	}
 	if message.Parent().SpanID() != httpSpan.SpanContext().SpanID() {
-		t.Fatalf("mcp.tools/call parent = %s, want the otelhttp span %s",
+		t.Fatalf("tools/call parent = %s, want the otelhttp span %s",
 			message.Parent().SpanID(), httpSpan.SpanContext().SpanID())
 	}
 }
@@ -725,6 +734,40 @@ func TestBuildHTTPHandlerRecordsRequestDuration(t *testing.T) {
 
 	// The span is named by method and route, not by the raw path.
 	spanNamed(t, sr.Ended(), http.MethodPost+" "+streamableEndpointPath)
+}
+
+// TestBuildHTTPHandlerAnnotatesTheJSONRPCMessage pins the wiring of the
+// annotation: for notifications and replies to server pings, the HTTP span is
+// the only record of what a POST carried.
+func TestBuildHTTPHandlerAnnotatesTheJSONRPCMessage(t *testing.T) {
+	sr, _ := withRecordingProviders(t)
+	httpSrv := serveStreamableTransport(t, true)
+
+	resp := postJSONRPC(t, httpSrv, initializeMessage)
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST initialize: status %d, body %s", resp.StatusCode, body)
+	}
+
+	span := spanNamed(t, sr.Ended(), http.MethodPost+" "+streamableEndpointPath)
+
+	got := make(map[string]string)
+	for _, kv := range span.Attributes() {
+		got[string(kv.Key)] = kv.Value.String()
+	}
+
+	if kind := got["mcp_helm.jsonrpc.message.kind"]; kind != "request" {
+		t.Errorf("mcp_helm.jsonrpc.message.kind = %q, want request", kind)
+	}
+
+	// A request's method and id belong to the MCP span alone.
+	for _, key := range []string{"mcp.method.name", "jsonrpc.request.id"} {
+		if value, ok := got[key]; ok {
+			t.Errorf("%s = %q on the HTTP span, want it only on the MCP span", key, value)
+		}
+	}
 }
 
 // TestBuildHTTPHandlerNamesUnroutedRequests pins the cardinality guard on the
@@ -1142,4 +1185,17 @@ func waitForListener(t *testing.T, addr string) {
 	}
 
 	t.Fatalf("nothing accepted connections on %s", addr)
+}
+
+func TestMCPTransport(t *testing.T) {
+	tests := map[string]telemetry.Transport{
+		"stdio": telemetry.TransportStdio,
+		"sse":   telemetry.TransportHTTP,
+		"http":  telemetry.TransportHTTP,
+	}
+	for mode, want := range tests {
+		if got := mcpTransport(mode); got != want {
+			t.Errorf("mcpTransport(%q) = %v, want %v", mode, got, want)
+		}
+	}
 }

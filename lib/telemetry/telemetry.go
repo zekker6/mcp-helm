@@ -37,6 +37,9 @@ import (
 // handed out by Telemetry.
 const scopeName = "github.com/zekker6/mcp-helm"
 
+// Namespace prefixes application-specific telemetry names, not OTel conventions.
+const Namespace = "mcp_helm."
+
 // Read by resource.Default(). Checked here only so the compiled-in service name
 // does not silently win over either.
 const (
@@ -118,6 +121,7 @@ func Setup(ctx context.Context, cfg Config, info ServiceInfo) (*Telemetry, error
 	tracerProvider := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(traceExporter),
 		sdktrace.WithResource(res),
+		sdktrace.WithRawSpanLimits(spanLimits()),
 	)
 	t.tracerProvider = tracerProvider
 	t.shutdownFuncs = append(t.shutdownFuncs, tracerProvider.Shutdown)
@@ -189,20 +193,39 @@ func newTraceExporter(ctx context.Context, cfg SignalConfig) (sdktrace.SpanExpor
 	}
 }
 
-// newMetricExporter builds the OTLP metric exporter for the resolved protocol.
+const envHistogramAggregation = "OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION"
+
+// The SDK supplies cumulative temporality by default. Leave that selector
+// untouched so OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE still works.
 func newMetricExporter(ctx context.Context, cfg SignalConfig) (sdkmetric.Exporter, error) {
+	useDefaultAggregation := os.Getenv(envHistogramAggregation) == ""
 	switch cfg.Protocol {
 	case ProtocolGRPC:
 		opts := []otlpmetricgrpc.Option{otlpmetricgrpc.WithEndpoint(cfg.Endpoint)}
 		if cfg.Insecure {
 			opts = append(opts, otlpmetricgrpc.WithInsecure())
 		}
+		if useDefaultAggregation {
+			opts = append(opts, otlpmetricgrpc.WithAggregationSelector(defaultMetricAggregation))
+		}
 		return otlpmetricgrpc.New(ctx, opts...)
 	case ProtocolHTTP:
-		return otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(cfg.Endpoint))
+		opts := []otlpmetrichttp.Option{otlpmetrichttp.WithEndpointURL(cfg.Endpoint)}
+		if useDefaultAggregation {
+			opts = append(opts, otlpmetrichttp.WithAggregationSelector(defaultMetricAggregation))
+		}
+		return otlpmetrichttp.New(ctx, opts...)
 	default:
 		return nil, unsupportedProtocol(cfg.Protocol)
 	}
+}
+
+func defaultMetricAggregation(kind sdkmetric.InstrumentKind) sdkmetric.Aggregation {
+	if kind == sdkmetric.InstrumentKindHistogram {
+		return sdkmetric.AggregationBase2ExponentialHistogram{MaxSize: 160, MaxScale: 20}
+	}
+
+	return sdkmetric.DefaultAggregationSelector(kind)
 }
 
 // newLogExporter builds the OTLP log record exporter for the resolved protocol.
@@ -276,4 +299,28 @@ func serviceNameSetInEnv() bool {
 	}
 
 	return false
+}
+
+// Read by sdktrace.NewSpanLimits. Checked here only so the default below does
+// not override a limit the environment sets, unlimited included.
+const (
+	envAttrValueLengthLimit     = "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT"
+	envSpanAttrValueLengthLimit = "OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT"
+)
+
+// defaultAttributeValueLengthLimit caps span attribute values when the
+// environment sets no limit. The SDK default is unlimited, and several values
+// here are whatever a client sent: a notification's method, a string JSON-RPC
+// id, the name of a tool that does not exist.
+const defaultAttributeValueLengthLimit = 4096
+
+// spanLimits are the SDK's limits from the environment, with
+// defaultAttributeValueLengthLimit applied when it sets no length limit.
+func spanLimits() sdktrace.SpanLimits {
+	limits := sdktrace.NewSpanLimits()
+	if os.Getenv(envAttrValueLengthLimit) == "" && os.Getenv(envSpanAttrValueLengthLimit) == "" {
+		limits.AttributeValueLengthLimit = defaultAttributeValueLengthLimit
+	}
+
+	return limits
 }

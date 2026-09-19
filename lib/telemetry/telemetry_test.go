@@ -616,3 +616,30 @@ func TestSetupMixedProtocols(t *testing.T) {
 		t.Errorf("collector received /v1/traces over HTTP, the per-signal gRPC override was ignored")
 	}
 }
+
+func TestSpanLimitsDefaultAttributeValueLength(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want int
+	}{
+		{name: "unset", want: defaultAttributeValueLengthLimit},
+		{name: "generic limit", env: map[string]string{envAttrValueLengthLimit: "100"}, want: 100},
+		{name: "span limit", env: map[string]string{envSpanAttrValueLengthLimit: "50"}, want: 50},
+		{name: "explicitly unlimited", env: map[string]string{envAttrValueLengthLimit: "-1"}, want: -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(envAttrValueLengthLimit, "")
+			t.Setenv(envSpanAttrValueLengthLimit, "")
+			for name, value := range tt.env {
+				t.Setenv(name, value)
+			}
+
+			if got := spanLimits().AttributeValueLengthLimit; got != tt.want {
+				t.Errorf("AttributeValueLengthLimit = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}

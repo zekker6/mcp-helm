@@ -15,6 +15,8 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/zekker6/mcp-helm/lib/telemetry"
 )
 
 const (
@@ -24,10 +26,8 @@ const (
 	// pays nothing and no call site branches on whether telemetry is enabled.
 	scopeName = "helm_client"
 
-	// attrNamespace prefixes every name this package defines. Nothing here has
-	// a registry entry, and unprefixed names are reserved for the
-	// specification, so custom names carry the owner's reverse domain.
-	attrNamespace = "cloud.zekker.helm."
+	// No registry attribute covers Helm repositories or charts.
+	attrNamespace = telemetry.Namespace + "helm."
 
 	operationDurationInstrument = attrNamespace + "operation.duration"
 )
@@ -88,6 +88,7 @@ var operationDuration, _ = otel.GetMeterProvider().Meter(scopeName).Float64Histo
 	operationDurationInstrument,
 	metric.WithUnit("s"),
 	metric.WithDescription("Duration of Helm repository and chart operations."),
+	metric.WithExplicitBucketBoundaries(telemetry.DurationBucketBoundaries...),
 )
 
 // startSpan reads the global provider per call rather than caching it: the

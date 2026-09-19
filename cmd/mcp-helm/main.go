@@ -12,10 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	mcpotel "github.com/mark3labs/mcp-go/otel"
 	"github.com/mark3labs/mcp-go/server"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"github.com/zekker6/mcp-helm/internal/tools"
@@ -46,7 +44,7 @@ const unroutedSpanName = "HTTP"
 // telemetryFieldNamespace prefixes the startup fields naming each signal's
 // endpoint. "otel." is reserved for spec-defined attributes, and these records
 // reach the collector through the log bridge like any other.
-const telemetryFieldNamespace = "cloud.zekker.telemetry."
+const telemetryFieldNamespace = telemetry.Namespace + "telemetry."
 
 func readPasswordFile(path string) (string, error) {
 	data, err := os.ReadFile(path)
@@ -148,12 +146,12 @@ func serveInstrumented(ctx context.Context, cfg telemetry.Config, tel *telemetry
 		return err
 	}
 
-	toolMiddleware, err := tel.ToolMiddleware()
+	instrumentation, err := tel.MCPInstrumentation(mcpTransport(*mode))
 	if err != nil {
-		return fmt.Errorf("failed to build tool middleware: %w", err)
+		return fmt.Errorf("failed to build MCP instrumentation: %w", err)
 	}
 
-	s := buildServer(helmClient, mcpServerOptions(cfg.Enabled, tel.Tracer(), toolMiddleware)...)
+	s := buildServer(helmClient, mcpServerOptions(cfg.Enabled, instrumentation, telemetry.ToolMiddleware)...)
 
 	logger.Info("Starting MCP Helm server", append([]zap.Field{
 		zap.String("version", version),
@@ -377,25 +375,30 @@ func buildServer(helmClient *helm_client.HelmClient, opts ...server.ServerOption
 	return s
 }
 
-// mcpServerOptions installs the MCP protocol tracer and the tool middleware.
-//
-// server.WithTracer is used directly rather than the adapter's WithServerTracing
-// variants: those also install a propagator, and mcp-go extracts from the
-// inbound headers before opening its span. Over HTTP that reparents the MCP span
-// onto the remote context, making it a sibling of the otelhttp span instead of
-// its child. Extraction belongs to otelhttp.
+// mcpServerOptions installs the MCP instrumentation and the tool middleware.
 //
 // Order matters: mcp-go applies tool middlewares in reverse registration order,
-// so the tracer has to come first for the middleware to run inside tool.<name>.
-func mcpServerOptions(enabled bool, tracer trace.Tracer, toolMiddleware server.ToolHandlerMiddleware) []server.ServerOption {
+// and the instrumentation registers the one opening tool.<name>, so it has to
+// come first for the middleware to run inside that span.
+func mcpServerOptions(
+	enabled bool,
+	instrumentation *telemetry.MCPInstrumentation,
+	toolMiddleware server.ToolHandlerMiddleware,
+) []server.ServerOption {
 	if !enabled {
 		return nil
 	}
 
-	return []server.ServerOption{
-		server.WithTracer(mcpotel.NewTracer(tracer)),
-		server.WithToolHandlerMiddleware(toolMiddleware),
+	return append(instrumentation.ServerOptions(), server.WithToolHandlerMiddleware(toolMiddleware))
+}
+
+// mcpTransport maps -mode to the transport the MCP conventions record.
+func mcpTransport(mode string) telemetry.Transport {
+	if mode == "stdio" {
+		return telemetry.TransportStdio
 	}
+
+	return telemetry.TransportHTTP
 }
 
 // transportRoutes bounds the span names otelhttp produces to the real routes,
@@ -431,7 +434,7 @@ func buildHTTPHandler(next http.Handler, otelEnabled bool, routes transportRoute
 		return next
 	}
 
-	return otelhttp.NewHandler(next, serviceName,
+	return otelhttp.NewHandler(telemetry.AnnotateJSONRPC(next), serviceName,
 		otelhttp.WithServerName(otelServerName(*httpListenAddr)),
 		otelhttp.WithFilter(func(r *http.Request) bool { return !routes.isStream(r) }),
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return routes.spanName(r) }),
