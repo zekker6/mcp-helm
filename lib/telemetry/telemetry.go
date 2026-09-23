@@ -232,11 +232,12 @@ func defaultMetricAggregation(kind sdkmetric.InstrumentKind) sdkmetric.Aggregati
 func newLogExporter(ctx context.Context, cfg SignalConfig) (sdklog.Exporter, error) {
 	switch cfg.Protocol {
 	case ProtocolGRPC:
-		opts := []otlploggrpc.Option{otlploggrpc.WithEndpoint(cfg.Endpoint)}
 		if cfg.Insecure {
-			opts = append(opts, otlploggrpc.WithInsecure())
+			return otlploggrpc.New(ctx, otlploggrpc.WithEndpoint(cfg.Endpoint), otlploggrpc.WithInsecure())
 		}
-		return otlploggrpc.New(ctx, opts...)
+		// The log exporter treats grpcs:// in the environment as insecure.
+		// An explicit HTTPS URL pins TLS without replacing env CA or mTLS settings.
+		return otlploggrpc.New(ctx, otlploggrpc.WithEndpointURL("https://"+cfg.Endpoint))
 	case ProtocolHTTP:
 		return otlploghttp.New(ctx, otlploghttp.WithEndpointURL(cfg.Endpoint))
 	default:

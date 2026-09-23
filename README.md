@@ -400,7 +400,8 @@ Any other scheme is a startup error naming the four accepted schemes.
   path including `/v1/traces` and friends.
 - gRPC endpoints keep only `host:port`; gRPC has no signal path, so any path is dropped.
 - The protocol is resolved per signal, so mixed configurations work: traces over gRPC while metrics and logs go over
-  HTTP is a supported setup.
+  HTTP is a supported setup. For logs, `grpcs://` requires TLS even without a custom CA; use
+  `OTEL_EXPORTER_OTLP_CERTIFICATE` or `OTEL_EXPORTER_OTLP_LOGS_CERTIFICATE` for a private CA.
 
 ### Configuration Examples
 
