@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,6 +33,10 @@ const serviceName = "mcp-helm"
 const (
 	drainTimeout          = 10 * time.Second
 	telemetryFlushTimeout = 5 * time.Second
+	headerReadTimeout     = 5 * time.Second
+	requestReadTimeout    = 30 * time.Second
+	idleTimeout           = 60 * time.Second
+	maxHTTPBodyBytes      = 8 << 20
 )
 
 // streamableEndpointPath is mcp-go's default http endpoint. Injecting an
@@ -182,13 +188,23 @@ func serve(ctx context.Context, s *server.MCPServer, otelEnabled bool) error {
 	case "stdio":
 		return serveStdio(ctx, s)
 	case "sse":
-		return serveHTTPTransport(ctx, stop, newSSETransport(&http.Server{}, s, otelEnabled), *httpListenAddr, "SSE")
+		return serveHTTPTransport(ctx, stop, newSSETransport(newHTTPServer(), s, otelEnabled), *httpListenAddr, "SSE")
 	case "http":
-		return serveHTTPTransport(ctx, stop, newStreamableHTTPTransport(&http.Server{}, s, otelEnabled), *httpListenAddr, "HTTP")
+		return serveHTTPTransport(ctx, stop, newStreamableHTTPTransport(newHTTPServer(), s, otelEnabled), *httpListenAddr, "HTTP")
 	default:
 		// validateTransportFlags rejected anything else, so this is a bug. An
 		// error keeps it from exiting 0 as if the server had run.
 		return fmt.Errorf("unreachable: mode %q passed validation", *mode)
+	}
+}
+
+// The read timeout covers request headers and bodies, not response streaming.
+// Leave WriteTimeout unset so long-lived SSE responses can stay open.
+func newHTTPServer() *http.Server {
+	return &http.Server{
+		ReadHeaderTimeout: headerReadTimeout,
+		ReadTimeout:       requestReadTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 }
 
@@ -430,6 +446,7 @@ func (t transportRoutes) spanName(r *http.Request) string {
 // buildHTTPHandler is the single place the sse and http transport handlers get
 // wrapped.
 func buildHTTPHandler(next http.Handler, otelEnabled bool, routes transportRoutes) http.Handler {
+	next = limitHTTPBody(next)
 	if !otelEnabled {
 		return next
 	}
@@ -439,6 +456,38 @@ func buildHTTPHandler(next http.Handler, otelEnabled bool, routes transportRoute
 		otelhttp.WithFilter(func(r *http.Request) bool { return !routes.isStream(r) }),
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return routes.spanName(r) }),
 	)
+}
+
+// limitHTTPBody rejects oversized POSTs before mcp-go buffers the whole body.
+func limitHTTPBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.ContentLength > maxHTTPBodyBytes {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+
+		limited := http.MaxBytesReader(w, r.Body, maxHTTPBodyBytes)
+		body, err := io.ReadAll(limited)
+		if err != nil {
+			var sizeErr *http.MaxBytesError
+			if errors.As(err, &sizeErr) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			} else {
+				http.Error(w, "failed to read request body", http.StatusBadRequest)
+			}
+			return
+		}
+		if err := limited.Close(); err != nil {
+			http.Error(w, "failed to close request body", http.StatusBadRequest)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		next.ServeHTTP(w, r)
+	})
 }
 
 // otelServerName pins the server.address and server.port otelhttp puts on

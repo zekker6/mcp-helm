@@ -120,6 +120,11 @@ go install github.com/zekker6/mcp-helm/cmd/mcp-helm@latest
 Configure your MCP client to connect to this server. The server implements the standard MCP protocol for tool discovery
 and execution.
 
+In `http` and `sse` modes, POST bodies are limited to 8 MiB. Larger requests receive HTTP 413, including
+chunked uploads without `Content-Length`. The HTTP server allows 5 seconds for request headers, 30 seconds for
+headers and body together, and 60 seconds for idle connections. SSE responses have no write deadline and may stay
+open beyond these request-read budgets. These limits do not cap the work performed by an accepted tool call.
+
 ### Repository index caching
 
 The index of an HTTP Helm repository is downloaded on first use and reused for `-repo-index-max-age` (default `1h`).
