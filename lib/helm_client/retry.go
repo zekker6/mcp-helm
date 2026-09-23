@@ -99,9 +99,8 @@ func getterStatusCode(err error) int {
 	return n
 }
 
-// retryGetter retries transient failures of a helm getter. HTTPGetter accepts
-// only an *http.Transport, so a retrying RoundTripper cannot be injected and
-// each Get call is retried as a whole instead.
+// retryGetter retries the complete download, including transient body-read
+// failures. Size-limit errors are not transient and are returned immediately.
 type retryGetter struct {
 	getter.Getter
 }
@@ -133,32 +132,19 @@ func (g *retryGetter) Get(href string, options ...getter.Option) (*bytes.Buffer,
 	}
 }
 
-// getters returns helm's getter providers with HTTP(S) downloads wrapped in
-// retryGetter.
-func (c *HelmClient) getters() getter.Providers {
-	providers := getter.All(c.settings)
-	for i, p := range providers {
-		if !p.Provides("http") && !p.Provides("https") {
-			continue
-		}
-		newGetter := p.New
-		providers[i].New = func(options ...getter.Option) (getter.Getter, error) {
-			g, err := newGetter(options...)
-			if err != nil {
-				return nil, err
-			}
-			return &retryGetter{Getter: g}, nil
-		}
-	}
-	return providers
-}
-
-// newRegistryHTTPClient builds the same client helm's registry package uses by
-// default, with retryPolicy in place of retry.DefaultPolicy. The transport must
-// stay a *retry.Transport over an *http.Transport so the registry client can
-// still apply TLS settings to it.
-func newRegistryHTTPClient() *http.Client {
+// newRegistryHTTPClient preserves Helm's retry transport. Pull clients count
+// response bytes below retries so failed attempts also spend the pull budget.
+func newRegistryHTTPClient(budget *byteBudget) (*http.Client, func()) {
 	transport := registry.NewTransport(false)
 	transport.Policy = func() retry.Policy { return retryPolicy }
-	return &http.Client{Transport: transport}
+	base := transport.Base
+	closeIdle := func() {
+		if closer, ok := base.(interface{ CloseIdleConnections() }); ok {
+			closer.CloseIdleConnections()
+		}
+	}
+	if budget != nil {
+		transport.Base = &budgetTransport{base: base, budget: budget}
+	}
+	return &http.Client{Transport: transport}, closeIdle
 }

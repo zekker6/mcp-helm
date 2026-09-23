@@ -3,6 +3,7 @@ module github.com/zekker6/mcp-helm
 go 1.27.0
 
 require (
+	github.com/KimMachineGun/automemlimit v1.0.0
 	github.com/gobwas/glob v1.0.0
 	github.com/mark3labs/mcp-go v1.1.1
 	github.com/opencontainers/go-digest v1.0.0
@@ -86,6 +87,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/monochromegane/go-gitignore v0.0.0-20200626010858-205db1a8cc00 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect

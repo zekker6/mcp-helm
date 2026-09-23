@@ -122,14 +122,91 @@ and execution.
 
 ### Repository index caching
 
-The index of an HTTP Helm repository is downloaded on first use and reused for `-repo-index-max-age` (default `5m`).
+The index of an HTTP Helm repository is downloaded on first use and reused for `-repo-index-max-age` (default `1h`).
 Once that age is exceeded, the next request downloads the index again, so newly published chart versions show up
 without a restart. Set `-repo-index-max-age=0` to download the index on every request. OCI registries are always
 queried live.
 
+By default, each client retains at most 16 repository indexes with a source-byte budget derived from its memory
+allocation at startup, evicting the least recently used indexes when either limit is reached. The MCP server shares
+one Helm client and its cache across requests. Parsed Go objects add memory overhead; this is not a process heap limit.
+Eviction does not change snapshots already held by active requests. Index files use a private temporary directory
+that is removed after parsing, including on download or parse failure. HTTP chart archives are loaded directly from
+memory. Existing files in shared Helm cache directories are not read or deleted.
+
+### Cache and download limits
+
+The defaults are named constants in `lib/helm_client/limits.go` and `lib/helm_client/memory.go`. Override them with environment variables read when
+creating the Helm client. Values must be positive decimal integers, with byte limits expressed in bytes, not `MiB`
+or other suffixed units. An unset variable uses its default; empty, zero, negative, malformed, or overflowing values
+fail startup. Existing clients do not reload changes to the environment. The `-repo-index-max-age` flag still controls TTL.
+
+| Environment variable | Default | Controls |
+|----------------------|---------|----------|
+| `MCP_HELM_REPO_CACHE_MAX_ENTRIES` | `16` | Retained repository index count |
+| `MCP_HELM_REPO_CACHE_MAX_BYTES` | Automatic, described below | Total retained index source bytes |
+| `MCP_HELM_INDEX_MAX_BYTES` | `33554432` (32 MiB) | Bytes per HTTP index download |
+| `MCP_HELM_CHART_MAX_BYTES` | `104857600` (100 MiB) | Bytes per compressed HTTP chart archive |
+| `MCP_HELM_OCI_MAX_BYTES` | `134217728` (128 MiB) | Total response-body bytes per OCI pull |
+
+When `MCP_HELM_REPO_CACHE_MAX_BYTES` is unset, the client uses **1/16 of the smallest detected memory allocation,
+capped at 256 MiB**. It considers Linux cgroup v1/v2 limits, including visible parent limits, the current Go runtime
+memory limit initialized by `GOMEMLIMIT`, and total host RAM. It does not use fluctuating free memory or Kubernetes
+memory requests. This calculation never changes Go's memory limit.
+
+| Memory allocation | Automatic cache source-byte budget |
+|-------------------|------------------------------------|
+| 512 MiB | 32 MiB |
+| 1 GiB | 64 MiB |
+| 2 GiB | 128 MiB |
+| 4 GiB or more | 256 MiB |
+
+If no limit can be detected, the client falls back to 64 MiB. A detection error, such as an unreadable container
+controller, caps the result at 64 MiB while preserving any smaller detected budget. Startup logs report the sizing
+mode, selected budget, detected allocation and source when available, and any detection error. No background
+resizing runs; allocation changes take effect when a new client starts. An explicit byte override bypasses detection
+and the automatic cap. On small allocations, a valid index larger than the cache budget can be downloaded but will
+not be retained. These source-byte budgets are not measured heap limits and do not prevent OOM from concurrent work.
+
+The OCI budget includes manifests, configuration, chart layers, authentication responses, redirects and retries.
+Concurrent pulls have independent budgets. Responses without `Content-Length` are checked while reading; oversized
+downloads fail instead of being truncated and parsed. These limits do not cap concurrent requests or chart-rendering
+memory. Helm's decompressed chart-content limit still applies.
+
+For example, allow a larger working set and larger individual indexes:
+
+```fish
+env MCP_HELM_REPO_CACHE_MAX_ENTRIES=32 \
+    MCP_HELM_REPO_CACHE_MAX_BYTES=134217728 \
+    MCP_HELM_INDEX_MAX_BYTES=67108864 \
+    ./mcp-helm -mode=http
+```
+
+### Validating a shared server
+
+Run `task test:repos` to fetch current indexes from Prometheus Community, Grafana, Bitnami, Jetstack, Argo, and
+ingress-nginx. It checks the working set against the configured limits, replays those exact indexes locally with
+eight concurrent callers, verifies warm-cache reuse, and downloads one representative chart from each public
+repository. The repeated load phase does not hit public servers. The test logs source sizes, latency, failures,
+and quiescent Go heap usage, which includes the captured test fixtures and is not process RSS. Public endpoint or
+chart-format failures fail the test rather than being skipped. This opt-in check is separate from `task test`.
+For indexes that reference OCI charts, it also tests the direct OCI reference separately. The HTTP-repository loader
+currently does not follow `oci://` archive URLs, including Bitnami's nginx chart; use the direct OCI repository URL
+for those charts. This compatibility failure remains visible in the public test.
+
+The regular tests also exercise eight independent MCP HTTP clients against local repositories, including forced
+cache eviction and repeated chart downloads. A passing run is a compatibility and concurrency regression check,
+not a production capacity guarantee. The cache limits bound retention, not the number of active users. Cold index
+fetches still share a global lock, and chart archives are downloaded on each request. Size the index limit for the
+largest repository and the cache byte limit for the full frequently used working set, with room for growth.
+
 ### Authentication
 
 The server supports authentication for both OCI registries and HTTP Helm repositories.
+
+When embedding the Go client, HTTP repository downloads clone `http.DefaultTransport` if it is a `*http.Transport`.
+If it is wrapped or replaced with another `http.RoundTripper`, downloads use a private transport with environment
+proxy support instead. The wrapper is not used; the client's repository TLS options still apply.
 
 #### Command-Line Flags
 
@@ -507,10 +584,9 @@ The ids are stripped from the exported record's attributes so they are not on th
 
 Two things are deliberately not instrumented:
 
-- **No outbound HTTP client spans.** Helm's SDK builds its own request contexts internally and its transport option
-  takes a concrete `*http.Transport`, so an instrumented HTTP client would emit orphaned root spans disconnected from
-  the tool's trace. Outbound work is covered by the manual `helm.repo.index`, `helm.chart.download`, `helm.oci.pull`
-  and `helm.oci.tags` client spans instead.
+- **No per-request outbound HTTP spans.** Outbound work is covered by the manual `helm.repo.index`,
+  `helm.chart.download`, `helm.oci.pull` and `helm.oci.tags` client spans. OCI requests still use contexts created
+  internally by Helm's SDK; instrumenting those requests would produce spans disconnected from the tool's trace.
 - **Long-lived stream requests are excluded from HTTP traces and metrics.** The `GET /sse` request in `sse` mode and the
   `GET /mcp` request in `http` mode stay open for the life of the client session. Tracing them would produce hours-long
   spans and put session durations into the request-latency histogram, so both are filtered out. The JSON-RPC requests

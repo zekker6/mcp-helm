@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
+	"net/http"
 	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -19,7 +19,6 @@ import (
 	"helm.sh/helm/v4/pkg/chart/loader"
 	chartv2 "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/cli"
-	"helm.sh/helm/v4/pkg/downloader"
 	"helm.sh/helm/v4/pkg/getter"
 	"helm.sh/helm/v4/pkg/registry"
 	"helm.sh/helm/v4/pkg/repo/v1"
@@ -55,7 +54,12 @@ type clientOptions struct {
 	passCredentialsAll    bool
 
 	// HTTP repository index cache
-	repoIndexMaxAge time.Duration
+	repoIndexMaxAge  time.Duration
+	indexMaxBytes    int64
+	chartMaxBytes    int64
+	ociMaxBytes      int64
+	repoCacheBytes   int64
+	repoCacheEntries int
 }
 
 // WithCredentialsFile sets the path to a Docker-style credentials file for OCI registries.
@@ -121,6 +125,8 @@ func WithRepoIndexMaxAge(maxAge time.Duration) ClientOption {
 type cachedRepo struct {
 	repo    *repo.ChartRepository
 	fetched time.Time
+	used    time.Time
+	size    int64
 }
 
 type HelmClient struct {
@@ -150,7 +156,9 @@ type HelmClient struct {
 }
 
 // NewClient creates a new HelmClient with optional configuration.
-// It supports both HTTP Helm repositories and OCI registries.
+// It supports both HTTP Helm repositories and OCI registries. MCP_HELM_* resource
+// limit environment variables are read once per client, before applying opts.
+// Invalid resource limits return an error without contacting a repository.
 //
 // Authentication for OCI registries can be configured via:
 //   - WithCredentialsFile: path to a Docker-style credentials file (per-host lookup)
@@ -162,23 +170,16 @@ type HelmClient struct {
 // repositories always use the basic-auth credentials (scoped per repository in
 // getRepo).
 func NewClient(opts ...ClientOption) (*HelmClient, error) {
-	options := &clientOptions{repoIndexMaxAge: DefaultRepoIndexMaxAge}
+	options := defaultClientOptions()
+	if err := options.loadLimitEnv(detectCacheSizing); err != nil {
+		return nil, fmt.Errorf("invalid Helm resource limits: %w", err)
+	}
 	for _, opt := range opts {
 		opt(options)
 	}
 
 	settings := cli.New()
-	settings.RepositoryCache = path.Join(tmpDir, "helm-cache")
 	settings.RegistryConfig = path.Join(tmpDir, "helm-registry.conf")
-	settings.RepositoryConfig = path.Join(tmpDir, "helm-repository.conf")
-
-	baseOpts := []registry.ClientOption{
-		registry.ClientOptEnableCache(true),
-		registry.ClientOptHTTPClient(newRegistryHTTPClient()),
-	}
-	if options.plainHTTP {
-		baseOpts = append(baseOpts, registry.ClientOptPlainHTTP())
-	}
 
 	hasBasicAuth := options.username != "" && options.password != ""
 	hasCredsFile := options.credentialsFile != ""
@@ -199,15 +200,12 @@ func NewClient(opts ...ClientOption) (*HelmClient, error) {
 			return nil, fmt.Errorf("failed to load registry credentials file %q: %w", options.credentialsFile, err)
 		}
 
-		credsClient, err := registry.NewClient(withRegistryOpts(baseOpts,
-			registry.ClientOptCredentialsFile(options.credentialsFile))...)
+		credsClient, err := client.newRegistryClient(options.credentialsFile, false, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OCI registry client (credentials file): %w", err)
 		}
 
-		basicClient, err := registry.NewClient(withRegistryOpts(baseOpts,
-			registry.ClientOptCredentialsFile(settings.RegistryConfig),
-			registry.ClientOptBasicAuth(options.username, options.password))...)
+		basicClient, err := client.newRegistryClient(settings.RegistryConfig, true, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OCI registry client (basic auth): %w", err)
 		}
@@ -237,12 +235,7 @@ func NewClient(opts ...ClientOption) (*HelmClient, error) {
 	if hasCredsFile {
 		credsFile = options.credentialsFile
 	}
-	regOpts := withRegistryOpts(baseOpts, registry.ClientOptCredentialsFile(credsFile))
-	if hasBasicAuth {
-		regOpts = append(regOpts, registry.ClientOptBasicAuth(options.username, options.password))
-	}
-
-	regClient, err := registry.NewClient(regOpts...)
+	regClient, err := client.newRegistryClient(credsFile, hasBasicAuth, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create registry client: %w", err)
 	}
@@ -251,13 +244,22 @@ func NewClient(opts ...ClientOption) (*HelmClient, error) {
 	return client, nil
 }
 
-// withRegistryOpts returns a fresh slice combining base and extra registry
-// client options without mutating base's backing array.
-func withRegistryOpts(base []registry.ClientOption, extra ...registry.ClientOption) []registry.ClientOption {
-	out := make([]registry.ClientOption, 0, len(base)+len(extra))
-	out = append(out, base...)
-	out = append(out, extra...)
-	return out
+func (c *HelmClient) newRegistryClient(credsFile string, basicAuth bool, httpClient *http.Client) (*registry.Client, error) {
+	if httpClient == nil {
+		httpClient, _ = newRegistryHTTPClient(nil)
+	}
+	opts := []registry.ClientOption{
+		registry.ClientOptEnableCache(true),
+		registry.ClientOptHTTPClient(httpClient),
+		registry.ClientOptCredentialsFile(credsFile),
+	}
+	if c.options.plainHTTP {
+		opts = append(opts, registry.ClientOptPlainHTTP())
+	}
+	if basicAuth {
+		opts = append(opts, registry.ClientOptBasicAuth(c.options.username, c.options.password))
+	}
+	return registry.NewClient(opts...)
 }
 
 // registryClientFor returns the OCI registry client to use for repoURL. When
@@ -311,7 +313,24 @@ func (c *HelmClient) ociPull(ctx context.Context, repoURL, ref string) (result *
 	ctx, span := startClientSpan(ctx, spanOCIPull, ociRefAttributes(repoURL, ref)...)
 	defer func() { endSpan(ctx, span, err) }()
 
-	return c.registryClientFor(ctx, repoURL).Pull(ref, registry.PullOptWithChart(true))
+	selected := c.registryClientFor(ctx, repoURL)
+	credsFile := c.settings.RegistryConfig
+	basicAuth := c.options.username != "" && c.options.password != ""
+	if c.options.credentialsFile != "" && (c.credStore == nil || selected == c.registryClientCreds) {
+		credsFile = c.options.credentialsFile
+		if c.credStore != nil {
+			basicAuth = false
+		}
+	}
+	// Helm creates its own contexts for pull requests. A private client gives
+	// all responses in this pull one budget without mixing concurrent pulls.
+	httpClient, closeIdle := newRegistryHTTPClient(newByteBudget(c.options.ociMaxBytes))
+	defer closeIdle()
+	pullClient, err := c.newRegistryClient(credsFile, basicAuth, httpClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bounded OCI client: %w", err)
+	}
+	return pullClient.Pull(ref, registry.PullOptWithChart(true))
 }
 
 // newCredStore builds an oras-go credentials store from a Docker-style
@@ -424,6 +443,7 @@ func (c *HelmClient) getRepo(ctx context.Context, name, url string) (chartRepo *
 	// updated in place, so callers still reading the previous IndexFile keep a
 	// consistent snapshot.
 	if v, exists := c.repos[name]; exists && c.options != nil && time.Since(v.fetched) < c.options.repoIndexMaxAge {
+		v.used = time.Now()
 		return v.repo, nil
 	}
 
@@ -433,7 +453,7 @@ func (c *HelmClient) getRepo(ctx context.Context, name, url string) (chartRepo *
 	defer func() { endSpan(ctx, span, err) }()
 
 	entry := &repo.Entry{
-		Name: name,
+		Name: "index",
 		URL:  url,
 	}
 
@@ -448,11 +468,29 @@ func (c *HelmClient) getRepo(ctx context.Context, name, url string) (chartRepo *
 		entry.PassCredentialsAll = c.options.passCredentialsAll
 	}
 
-	chartRepo, err = repo.NewChartRepository(entry, c.getters())
+	limits := c.options
+	if limits == nil {
+		limits = defaultClientOptions()
+	}
+	providers := getter.Providers{{Schemes: []string{"http", "https"}, New: func(_ ...getter.Option) (getter.Getter, error) {
+		return c.newHTTPGetter(ctx, url, limits.indexMaxBytes)
+	}}}
+	chartRepo, err = repo.NewChartRepository(entry, providers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chart repository: %v", err)
 	}
 
+	cacheDir, err := os.MkdirTemp("", "helm-index-")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temporary index directory: %w", err)
+	}
+	defer func() {
+		if cleanupErr := os.RemoveAll(cacheDir); cleanupErr != nil {
+			chartRepo = nil
+			err = errors.Join(err, fmt.Errorf("failed to remove temporary index directory: %w", cleanupErr))
+		}
+	}()
+	chartRepo.CachePath = cacheDir
 	indexFileLocation, err := chartRepo.DownloadIndexFile()
 	if err != nil {
 		return nil, fmt.Errorf("failed to download repository index: %v", err)
@@ -465,7 +503,11 @@ func (c *HelmClient) getRepo(ctx context.Context, name, url string) (chartRepo *
 	chartRepo.IndexFile = file
 	chartRepo.IndexFile.SortEntries()
 
-	c.repos[name] = &cachedRepo{repo: chartRepo, fetched: time.Now()}
+	info, err := os.Stat(indexFileLocation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat index file: %w", err)
+	}
+	c.cacheRepo(name, chartRepo, info.Size(), limits)
 	return chartRepo, nil
 }
 
@@ -680,55 +722,24 @@ func (c *HelmClient) loadChartFromHTTP(ctx context.Context, repoURL, chartName, 
 		chartURL = fmt.Sprintf("%s/%s", repoBaseURL, strings.TrimPrefix(chartURL, "/"))
 	}
 
-	tempDir, err := os.MkdirTemp("", "helm-chart-")
+	limits := c.options
+	if limits == nil {
+		limits = defaultClientOptions()
+	}
+	g, err := c.newHTTPGetter(ctx, helmRepo.Config.URL, limits.chartMaxBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %v", err)
+		return nil, fmt.Errorf("failed to create chart downloader: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(tempDir) }()
-
-	chartPath := filepath.Join(tempDir, fmt.Sprintf("%s-%s", chartName, version))
-	_ = os.MkdirAll(chartPath, 0o755)
-
-	// Forward the same auth options getRepo applies to the index download.
-	// The Helm SDK's ChartDownloader does not auto-discover credentials from
-	// the repo.Entry, so they must be passed explicitly here; otherwise the
-	// .tgz fetch from a private repository goes out unauthenticated even though
-	// the index download was authenticated. Empty values are no-ops, so this is
-	// safe for public repositories.
-	downloadOpts := []getter.Option{
-		getter.WithURL(helmRepo.Config.URL), // Pass repo URL for context if needed by getters
-	}
-	if c.options != nil {
-		downloadOpts = append(downloadOpts,
-			getter.WithBasicAuth(c.options.username, c.options.password),
-			getter.WithTLSClientConfig(c.options.certFile, c.options.keyFile, c.options.caFile),
-			getter.WithInsecureSkipVerifyTLS(c.options.insecureSkipTLSVerify),
-			getter.WithPassCredentialsAll(c.options.passCredentialsAll),
-		)
-	}
-
-	dl := downloader.ChartDownloader{
-		Out:              io.Discard,
-		Keyring:          "",
-		Getters:          c.getters(),
-		Options:          downloadOpts,
-		RepositoryConfig: c.settings.RepositoryConfig,
-		RepositoryCache:  c.settings.RepositoryCache,
-		ContentCache:     c.settings.ContentCache,
-		Verify:           downloader.VerifyNever,
-	}
-
 	_, downloadSpan := startClientSpan(ctx, spanChartDownload, chartDownloadAttributes(chartURL)...)
-	chartOutputPath, _, err := dl.DownloadTo(chartURL, version, chartPath)
+	archive, err := g.Get(chartURL)
 	endSpan(ctx, downloadSpan, err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download chart %s version %s from %s: %v", chartName, version, chartURL, err)
 	}
 
-	// Load the downloaded chart
-	loadedChart, err := loader.Load(chartOutputPath)
+	loadedChart, err := loader.LoadArchive(archive)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load chart from %s: %v", chartPath, err)
+		return nil, fmt.Errorf("failed to load chart archive: %w", err)
 	}
 
 	v2Chart, ok := loadedChart.(*chartv2.Chart)
