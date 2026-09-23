@@ -107,7 +107,7 @@ func WithInsecureSkipTLSVerify(skip bool) ClientOption {
 	}
 }
 
-// WithPassCredentialsAll enables passing credentials to all domains when following redirects.
+// WithPassCredentialsAll sends HTTP repository credentials to every chart URL and redirect origin.
 func WithPassCredentialsAll(pass bool) ClientOption {
 	return func(o *clientOptions) {
 		o.passCredentialsAll = pass

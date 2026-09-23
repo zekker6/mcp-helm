@@ -82,7 +82,7 @@ var (
 	tlsKeyFile            = flag.String("tls-key", "", "Path to TLS client key file for HTTP repositories")
 	tlsCAFile             = flag.String("tls-ca", "", "Path to CA certificate file for verifying HTTP repository servers")
 	tlsInsecureSkipVerify = flag.Bool("tls-insecure-skip-verify", false, "Skip TLS certificate verification for HTTP repositories (insecure)")
-	passCredentialsAll    = flag.Bool("pass-credentials-all", false, "Pass credentials to all domains when following redirects")
+	passCredentialsAll    = flag.Bool("pass-credentials-all", false, "Pass HTTP repository credentials to all chart URLs and redirect origins (insecure)")
 
 	repoIndexMaxAge = flag.Duration("repo-index-max-age", helm_client.DefaultRepoIndexMaxAge, "How long to reuse a downloaded HTTP repository index before downloading it again. 0 downloads it on every request")
 )

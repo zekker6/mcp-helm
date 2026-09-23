@@ -145,10 +145,27 @@ func (c *HelmClient) newHTTPGetter(ctx context.Context, baseURL string, limit in
 		}
 		transport.TLSClientConfig.Certificates = []tls.Certificate{cert}
 	}
+	client := &http.Client{Transport: transport, Timeout: getter.DefaultHTTPTimeout * time.Second}
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		// Go forwards Basic Auth to the same hostname even when the scheme or
+		// port changes. Scope every hop to the original repository origin.
+		req.Header.Del("Authorization")
+		setHTTPRepositoryAuth(req, base, opts)
+		return nil
+	}
 	return &retryGetter{Getter: &httpDownloadGetter{
-		ctx: ctx, client: &http.Client{Transport: transport, Timeout: getter.DefaultHTTPTimeout * time.Second},
-		baseURL: base, options: opts, limit: limit,
+		ctx: ctx, client: client, baseURL: base, options: opts, limit: limit,
 	}}, nil
+}
+
+func setHTTPRepositoryAuth(req *http.Request, base *url.URL, opts *clientOptions) {
+	if opts.username != "" && opts.password != "" &&
+		(opts.passCredentialsAll || (req.URL.Scheme == base.Scheme && req.URL.Host == base.Host)) {
+		req.SetBasicAuth(opts.username, opts.password)
+	}
 }
 
 func (g *httpDownloadGetter) Get(href string, _ ...getter.Option) (result *bytes.Buffer, err error) {
@@ -158,11 +175,7 @@ func (g *httpDownloadGetter) Get(href string, _ ...getter.Option) (result *bytes
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "mcp-helm")
-	if g.options.passCredentialsAll || (req.URL.Scheme == g.baseURL.Scheme && req.URL.Host == g.baseURL.Host) {
-		if g.options.username != "" && g.options.password != "" {
-			req.SetBasicAuth(g.options.username, g.options.password)
-		}
-	}
+	setHTTPRepositoryAuth(req, g.baseURL, g.options)
 	resp, err := g.client.Do(req)
 	if err != nil {
 		return nil, err

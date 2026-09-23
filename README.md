@@ -225,7 +225,12 @@ proxy support instead. The wrapper is not used; the client's repository TLS opti
 | `-tls-key`                  | Path to TLS client key file for HTTP repositories                     |
 | `-tls-ca`                   | Path to CA certificate file for verifying server certificates         |
 | `-tls-insecure-skip-verify` | Skip TLS certificate verification (insecure)                          |
-| `-pass-credentials-all`     | Pass credentials to all domains when following redirects              |
+| `-pass-credentials-all`     | Send HTTP repository credentials to all chart URLs and redirect origins (insecure) |
+
+HTTP repository credentials go to the repository's own scheme, host and port by default. Chart archives at other
+origins can still be downloaded, but receive no repository credentials, including after redirects or an HTTPS-to-HTTP
+downgrade. `-pass-credentials-all` opts into sending those credentials to every chart URL and redirect origin. Use it
+only when you trust the repository's chart URLs and every redirect target.
 
 #### Basic Authentication
 
