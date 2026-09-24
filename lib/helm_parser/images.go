@@ -78,6 +78,9 @@ func parseImage(image string) ImageReference {
 }
 
 func GetChartImages(ctx context.Context, chart *chartv2.Chart, customValues map[string]interface{}, recursive bool) ([]ImageReference, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// The engine renders every subchart along with the parent, so drop the ones disabled
 	// by condition or tags first, as helm install does.
 	if err := chartutil.ProcessDependencies(chart, customValues); err != nil {
@@ -109,8 +112,15 @@ func renderChart(ctx context.Context, chart *chartv2.Chart, customValues map[str
 	}
 
 	caps := common.DefaultCapabilities
-	valuesToRender, err := util.ToRenderValues(chart, customValues, options, caps)
+	valuesToRender, err := util.ToRenderValuesWithSchemaValidation(chart, customValues, options, caps, true)
 	if err != nil {
+		return nil, err
+	}
+	values := valuesToRender["Values"].(common.Values)
+	if err := validateChartSchemas(ctx, chart, values); err != nil {
+		return nil, fmt.Errorf("values don't meet the specifications of the schema(s) in the following chart(s):\n%w", err)
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
