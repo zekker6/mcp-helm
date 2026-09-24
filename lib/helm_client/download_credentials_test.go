@@ -112,6 +112,33 @@ func TestHTTPArchiveCredentialsStayOnRepositoryOrigin(t *testing.T) {
 	}
 }
 
+func TestHTTPChartArchiveAcceptHeader(t *testing.T) {
+	archive := testChartArchive(t)
+	var repoURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.yaml":
+			_, _ = w.Write(createTestIndex(repoURL))
+		case "/charts/test-chart-1.0.0.tgz":
+			if got := r.Header.Get("Accept"); got != "application/gzip,application/octet-stream" {
+				http.Error(w, "unsupported Accept: "+got, http.StatusNotAcceptable)
+				return
+			}
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	repoURL = server.URL
+
+	client := newTestClient(t)
+	values, err := client.GetChartValues(context.Background(), repoURL, "test-chart", "1.0.0")
+	if err != nil || values != "replicas: 1\n" {
+		t.Fatalf("archive values = %q, error = %v", values, err)
+	}
+}
+
 func TestHTTPGetterStopsAfterTenRedirects(t *testing.T) {
 	var count atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

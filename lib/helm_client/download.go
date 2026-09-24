@@ -175,6 +175,7 @@ func (g *httpDownloadGetter) Get(href string, _ ...getter.Option) (result *bytes
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "mcp-helm")
+	req.Header.Set("Accept", "application/gzip,application/octet-stream")
 	setHTTPRepositoryAuth(req, g.baseURL, g.options)
 	resp, err := g.client.Do(req)
 	if err != nil {
