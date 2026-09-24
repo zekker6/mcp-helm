@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"slices"
 	"strings"
@@ -27,7 +28,7 @@ type popularRepoSnapshot struct {
 // exact bytes locally for concurrent cache tests. Only one representative chart
 // per repository is pulled upstream; warm-load loops never hit public hosts.
 func TestPopularRepositories(t *testing.T) {
-	if testing.Short() {
+	if os.Getenv("MCP_HELM_TEST_PUBLIC_REPOS") != "1" {
 		t.Skip("public repository validation requires task test:repos")
 	}
 	fixtures := []*popularRepoSnapshot{
@@ -134,6 +135,7 @@ func TestPopularRepositories(t *testing.T) {
 			}
 			if len(chart.URLs) > 0 && IsOCI(chart.URLs[0]) {
 				ociRef = chart.URLs[0]
+				t.Skip("HTTP repository loader does not follow OCI chart URLs; testing direct OCI reference")
 			}
 			start := time.Now()
 			values, err := client.GetChartValues(ctx, url, fixture.chart, version)

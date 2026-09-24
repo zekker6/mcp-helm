@@ -35,6 +35,8 @@ tasks:
 
   test:repos:
     desc: Validate popular public repositories and replay their indexes under concurrent load
+    env:
+      MCP_HELM_TEST_PUBLIC_REPOS: "1"
     cmds:
       - go test -v -run '^TestPopularRepositories$' -count=1 -timeout=10m ./lib/helm_client
 
