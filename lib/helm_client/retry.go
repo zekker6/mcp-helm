@@ -61,7 +61,7 @@ func isRetryableStatus(code int) bool {
 // network layer: an http.Client.Timeout means the whole request budget was
 // already spent.
 func isTransientNetError(err error) bool {
-	if errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 
@@ -103,11 +103,18 @@ func getterStatusCode(err error) int {
 // failures. Size-limit errors are not transient and are returned immediately.
 type retryGetter struct {
 	getter.Getter
+	ctx context.Context
 }
 
 func (g *retryGetter) Get(href string, options ...getter.Option) (*bytes.Buffer, error) {
 	for attempt := 0; ; attempt++ {
+		if err := g.ctx.Err(); err != nil {
+			return nil, err
+		}
 		buf, err := g.Getter.Get(href, options...)
+		if err := g.ctx.Err(); err != nil {
+			return nil, err
+		}
 		if err == nil {
 			return buf, nil
 		}
@@ -128,13 +135,86 @@ func (g *retryGetter) Get(href string, options ...getter.Option) (*bytes.Buffer,
 			zap.Duration("backoff", wait),
 			zap.Error(err),
 		)
-		time.Sleep(wait)
+		timer := time.NewTimer(wait)
+		select {
+		case <-g.ctx.Done():
+			timer.Stop()
+			return nil, g.ctx.Err()
+		case <-timer.C:
+		}
 	}
+}
+
+// requestContext carries ORAS auth scopes and the earliest deadline. RoundTrip
+// combines cancellation from both parents for the lifetime of the response body.
+type requestContext struct {
+	context.Context
+	request context.Context
+}
+
+func (c requestContext) Deadline() (time.Time, bool) {
+	deadline, ok := c.Context.Deadline()
+	if requestDeadline, requestOK := c.request.Deadline(); requestOK && (!ok || requestDeadline.Before(deadline)) {
+		return requestDeadline, true
+	}
+	return deadline, ok
+}
+
+func (c requestContext) Value(key any) any {
+	if value := c.request.Value(key); value != nil {
+		return value
+	}
+	return c.Context.Value(key)
+}
+
+type operationTransport struct {
+	ctx  context.Context
+	base http.RoundTripper
+}
+
+func (t operationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := t.ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := req.Context().Err(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithCancelCause(requestContext{Context: t.ctx, request: req.Context()})
+	stop := context.AfterFunc(req.Context(), func() { cancel(context.Cause(req.Context())) })
+	cleanup := func() {
+		stop()
+		cancel(context.Canceled)
+	}
+	resp, err := t.base.RoundTrip(req.WithContext(ctx))
+	if err != nil || resp.Body == nil || resp.Body == http.NoBody {
+		cleanup()
+		return resp, err
+	}
+	resp.Body = &operationBody{ReadCloser: resp.Body, cleanup: cleanup}
+	return resp, nil
+}
+
+type operationBody struct {
+	io.ReadCloser
+	cleanup func()
+}
+
+func (b *operationBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.cleanup()
+	}
+	return n, err
+}
+
+func (b *operationBody) Close() error {
+	defer b.cleanup()
+	return b.ReadCloser.Close()
 }
 
 // newRegistryHTTPClient preserves Helm's retry transport. Pull clients count
 // response bytes below retries so failed attempts also spend the pull budget.
-func newRegistryHTTPClient(budget *byteBudget) (*http.Client, func()) {
+func newRegistryHTTPClient(ctx context.Context, budget *byteBudget) (*http.Client, func()) {
 	transport := registry.NewTransport(false)
 	transport.Policy = func() retry.Policy { return retryPolicy }
 	base := transport.Base
@@ -146,5 +226,5 @@ func newRegistryHTTPClient(budget *byteBudget) (*http.Client, func()) {
 	if budget != nil {
 		transport.Base = &budgetTransport{base: base, budget: budget}
 	}
-	return &http.Client{Transport: transport}, closeIdle
+	return &http.Client{Transport: operationTransport{ctx: ctx, base: transport}}, closeIdle
 }

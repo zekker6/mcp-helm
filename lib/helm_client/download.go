@@ -158,7 +158,7 @@ func (c *HelmClient) newHTTPGetter(ctx context.Context, baseURL string, limit in
 	}
 	return &retryGetter{Getter: &httpDownloadGetter{
 		ctx: ctx, client: client, baseURL: base, options: opts, limit: limit,
-	}}, nil
+	}, ctx: ctx}, nil
 }
 
 func setHTTPRepositoryAuth(req *http.Request, base *url.URL, opts *clientOptions) {

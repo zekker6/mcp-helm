@@ -35,6 +35,9 @@ var tmpDir = "/tmp/helm_cache"
 // reused before it is downloaded again.
 const DefaultRepoIndexMaxAge = 1 * time.Hour
 
+// Bounds an entire repository operation, including retries and OCI blob reads.
+const repositoryIOTimeout = 2 * time.Minute
+
 type ClientOption func(*clientOptions)
 
 type clientOptions struct {
@@ -244,9 +247,9 @@ func NewClient(opts ...ClientOption) (*HelmClient, error) {
 	return client, nil
 }
 
-func (c *HelmClient) newRegistryClient(credsFile string, basicAuth bool, httpClient *http.Client) (*registry.Client, error) {
+func (c *HelmClient) newRegistryClient(credsFile string, basicAuth bool, httpClient *http.Client, extra ...registry.ClientOption) (*registry.Client, error) {
 	if httpClient == nil {
-		httpClient, _ = newRegistryHTTPClient(nil)
+		httpClient, _ = newRegistryHTTPClient(context.Background(), nil)
 	}
 	opts := []registry.ClientOption{
 		registry.ClientOptEnableCache(true),
@@ -259,7 +262,7 @@ func (c *HelmClient) newRegistryClient(credsFile string, basicAuth bool, httpCli
 	if basicAuth {
 		opts = append(opts, registry.ClientOptBasicAuth(c.options.username, c.options.password))
 	}
-	return registry.NewClient(opts...)
+	return registry.NewClient(append(opts, extra...)...)
 }
 
 // registryClientFor returns the OCI registry client to use for repoURL. When
@@ -269,7 +272,7 @@ func (c *HelmClient) newRegistryClient(credsFile string, basicAuth bool, httpCli
 // the registry client's own credential lookup (oras-go store + Docker Hub key
 // mapping), so the routing decision matches what the chosen client will use.
 func (c *HelmClient) registryClientFor(ctx context.Context, repoURL string) *registry.Client {
-	if c.credStore == nil {
+	if ctx.Err() != nil || c.credStore == nil {
 		return c.registryClient
 	}
 
@@ -292,8 +295,15 @@ func (c *HelmClient) registryClientFor(ctx context.Context, repoURL string) *reg
 	if cred, err := c.credStore.Get(ctx, key); err == nil && cred != auth.EmptyCredential {
 		cl = c.registryClientCreds
 	}
+	if ctx.Err() != nil {
+		return c.registryClient
+	}
 
 	c.routeMu.Lock()
+	if ctx.Err() != nil {
+		c.routeMu.Unlock()
+		return c.registryClient
+	}
 	c.routeCache[host] = cl
 	c.routeMu.Unlock()
 	return cl
@@ -304,16 +314,51 @@ func (c *HelmClient) registryClientFor(ctx context.Context, repoURL string) *reg
 func (c *HelmClient) ociTags(ctx context.Context, repoURL, ref string) (tags []string, err error) {
 	ctx, span := startClientSpan(ctx, spanOCITags, ociRefAttributes(repoURL, ref)...)
 	defer func() { endSpan(ctx, span, err) }()
+	ctx, cancel := context.WithTimeout(ctx, repositoryIOTimeout)
+	defer cancel()
 
-	return c.registryClientFor(ctx, repoURL).Tags(ref)
+	client, closeIdle, err := c.newOperationRegistryClient(ctx, repoURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer closeIdle()
+	tags, err = client.Tags(ref)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return tags, err
 }
 
 // ociPull pulls a chart from an OCI registry.
 func (c *HelmClient) ociPull(ctx context.Context, repoURL, ref string) (result *registry.PullResult, err error) {
 	ctx, span := startClientSpan(ctx, spanOCIPull, ociRefAttributes(repoURL, ref)...)
 	defer func() { endSpan(ctx, span, err) }()
+	ctx, cancel := context.WithTimeout(ctx, repositoryIOTimeout)
+	defer cancel()
 
+	client, closeIdle, err := c.newOperationRegistryClient(ctx, repoURL, newByteBudget(c.options.ociMaxBytes))
+	if err != nil {
+		return nil, err
+	}
+	defer closeIdle()
+	result, err = client.Pull(ref, registry.PullOptWithChart(true))
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return result, err
+}
+
+// Each OCI operation needs its own transport because Helm creates background
+// contexts internally. A shared transport cannot carry concurrent callers' deadlines.
+func (c *HelmClient) newOperationRegistryClient(ctx context.Context, repoURL string, budget *byteBudget) (*registry.Client, func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	selected := c.registryClientFor(ctx, repoURL)
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+
 	credsFile := c.settings.RegistryConfig
 	basicAuth := c.options.username != "" && c.options.password != ""
 	if c.options.credentialsFile != "" && (c.credStore == nil || selected == c.registryClientCreds) {
@@ -322,15 +367,41 @@ func (c *HelmClient) ociPull(ctx context.Context, repoURL, ref string) (result *
 			basicAuth = false
 		}
 	}
-	// Helm creates its own contexts for pull requests. A private client gives
-	// all responses in this pull one budget without mixing concurrent pulls.
-	httpClient, closeIdle := newRegistryHTTPClient(newByteBudget(c.options.ociMaxBytes))
-	defer closeIdle()
-	pullClient, err := c.newRegistryClient(credsFile, basicAuth, httpClient)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create bounded OCI client: %w", err)
+	httpClient, closeIdle := newRegistryHTTPClient(ctx, budget)
+	authorizer := auth.Client{Client: httpClient, Cache: auth.NewCache()}
+	authorizer.SetUserAgent("mcp-helm")
+	if basicAuth {
+		authorizer.Credential = func(_ context.Context, _ string) (auth.Credential, error) {
+			return auth.Credential{Username: c.options.username, Password: c.options.password}, ctx.Err()
+		}
+	} else {
+		// Match Helm's credentials-file and Docker fallback while using the
+		// operation context for native credential helpers.
+		storeOptions := credentials.StoreOptions{AllowPlaintextPut: true, DetectDefaultNativeStore: true}
+		fileStore, err := credentials.NewStore(credsFile, storeOptions)
+		if err != nil {
+			closeIdle()
+			return nil, nil, err
+		}
+		var store credentials.Store = fileStore
+		if docker, err := credentials.NewStoreFromDocker(storeOptions); err == nil {
+			store = credentials.NewStoreWithFallbacks(store, docker)
+		}
+		credential := credentials.Credential(store)
+		authorizer.Credential = func(_ context.Context, host string) (auth.Credential, error) {
+			return credential(ctx, host)
+		}
 	}
-	return pullClient.Pull(ref, registry.PullOptWithChart(true))
+	client, err := c.newRegistryClient(credsFile, basicAuth, httpClient, registry.ClientOptAuthorizer(authorizer))
+	if err != nil {
+		closeIdle()
+		return nil, nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		closeIdle()
+		return nil, nil, err
+	}
+	return client, closeIdle, nil
 }
 
 // newCredStore builds an oras-go credentials store from a Docker-style
@@ -432,8 +503,16 @@ func ExtractChartNameFromOCI(repoURL string) string {
 }
 
 func (c *HelmClient) getRepo(ctx context.Context, name, url string) (chartRepo *repo.ChartRepository, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, repositoryIOTimeout)
+	defer cancel()
 	c.reposMu.Lock()
 	defer c.reposMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	if c.repos == nil {
 		c.repos = make(map[string]*cachedRepo)
@@ -493,7 +572,7 @@ func (c *HelmClient) getRepo(ctx context.Context, name, url string) (chartRepo *
 	chartRepo.CachePath = cacheDir
 	indexFileLocation, err := chartRepo.DownloadIndexFile()
 	if err != nil {
-		return nil, fmt.Errorf("failed to download repository index: %v", err)
+		return nil, fmt.Errorf("failed to download repository index: %w", err)
 	}
 
 	file, err := repo.LoadIndexFile(indexFileLocation)
@@ -507,6 +586,8 @@ func (c *HelmClient) getRepo(ctx context.Context, name, url string) (chartRepo *
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat index file: %w", err)
 	}
+	// Snapshots only serve index lookups; the downloader would retain this request's context.
+	chartRepo.Client = nil
 	c.cacheRepo(name, chartRepo, info.Size(), limits)
 	return chartRepo, nil
 }
@@ -530,7 +611,7 @@ func (c *HelmClient) ListCharts(ctx context.Context, repoURL string) (names []st
 
 	helmRepo, err := c.getRepo(ctx, repoURL, repoURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to add repository: %v", err)
+		return nil, fmt.Errorf("failed to add repository: %w", err)
 	}
 
 	charts := make(map[string]bool)
@@ -563,7 +644,7 @@ func (c *HelmClient) ListChartVersions(ctx context.Context, repoURL string, char
 		ref := parseOCIReference(repoURL, chart, "")
 		tags, err := c.ociTags(ctx, repoURL, ref)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list tags for OCI chart %s: %v", ref, err)
+			return nil, fmt.Errorf("failed to list tags for OCI chart %s: %w", ref, err)
 		}
 
 		op.setAttributes(attribute.Int(attrHelmVersionCount, len(tags)))
@@ -574,7 +655,7 @@ func (c *HelmClient) ListChartVersions(ctx context.Context, repoURL string, char
 
 	helmRepo, err := c.getRepo(ctx, repoURL, repoURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to add repository: %v", err)
+		return nil, fmt.Errorf("failed to add repository: %w", err)
 	}
 
 	versions = make([]string, 0)
@@ -602,7 +683,7 @@ func (c *HelmClient) GetChartValues(ctx context.Context, repoURL, chartName, ver
 
 	loadedChart, err := c.loadChart(ctx, repoURL, chartName, version)
 	if err != nil {
-		return "", fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
+		return "", fmt.Errorf("failed to load chart %s version %s: %w", chartName, version, err)
 	}
 
 	var rawContent []byte
@@ -626,7 +707,7 @@ func (c *HelmClient) GetChartContents(ctx context.Context, repoURL, chartName, v
 
 	loadedChart, err := c.loadChart(ctx, repoURL, chartName, version)
 	if err != nil {
-		return "", fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
+		return "", fmt.Errorf("failed to load chart %s version %s: %w", chartName, version, err)
 	}
 
 	if loadedChart == nil {
@@ -665,7 +746,7 @@ func (c *HelmClient) loadChartFromOCI(ctx context.Context, repoURL, chartName, v
 
 	result, err := c.ociPull(ctx, repoURL, ref)
 	if err != nil {
-		return nil, fmt.Errorf("failed to pull OCI chart %s: %v", ref, err)
+		return nil, fmt.Errorf("failed to pull OCI chart %s: %w", ref, err)
 	}
 
 	if result.Chart == nil || len(result.Chart.Data) == 0 {
@@ -686,10 +767,15 @@ func (c *HelmClient) loadChartFromOCI(ctx context.Context, repoURL, chartName, v
 }
 
 func (c *HelmClient) loadChartFromHTTP(ctx context.Context, repoURL, chartName, version string) (*chartv2.Chart, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, repositoryIOTimeout)
+	defer cancel()
 	// TODO: implement caching for values file
 	helmRepo, err := c.getRepo(ctx, repoURL, repoURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get repository: %v", err)
+		return nil, fmt.Errorf("failed to get repository: %w", err)
 	}
 
 	var cv *repo.ChartVersion
@@ -734,7 +820,7 @@ func (c *HelmClient) loadChartFromHTTP(ctx context.Context, repoURL, chartName, 
 	archive, err := g.Get(chartURL)
 	endSpan(ctx, downloadSpan, err)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download chart %s version %s from %s: %v", chartName, version, chartURL, err)
+		return nil, fmt.Errorf("failed to download chart %s version %s from %s: %w", chartName, version, chartURL, err)
 	}
 
 	loadedChart, err := loader.LoadArchive(archive)
@@ -759,7 +845,7 @@ func (c *HelmClient) GetChartLatestVersion(ctx context.Context, repoURL, chartNa
 		ref := parseOCIReference(repoURL, chartName, "")
 		tags, err := c.ociTags(ctx, repoURL, ref)
 		if err != nil {
-			return "", fmt.Errorf("failed to list tags for OCI chart %s: %v", ref, err)
+			return "", fmt.Errorf("failed to list tags for OCI chart %s: %w", ref, err)
 		}
 		if len(tags) == 0 {
 			return "", fmt.Errorf("no versions found for OCI chart %s", ref)
@@ -777,7 +863,7 @@ func (c *HelmClient) GetChartLatestVersion(ctx context.Context, repoURL, chartNa
 
 	helmRepo, err := c.getRepo(ctx, repoURL, repoURL)
 	if err != nil {
-		return "", fmt.Errorf("failed to get repository: %v", err)
+		return "", fmt.Errorf("failed to get repository: %w", err)
 	}
 
 	// An empty version skips prereleases, same as helm without --devel.
@@ -798,7 +884,7 @@ func (c *HelmClient) GetChartLatestValues(ctx context.Context, repoURL, chartNam
 
 	v, err := c.GetChartLatestVersion(ctx, repoURL, chartName)
 	if err != nil {
-		return "", fmt.Errorf("failed to get chart %s version %s: %v", chartName, v, err)
+		return "", fmt.Errorf("failed to get chart %s version %s: %w", chartName, v, err)
 	}
 
 	op.setAttributes(attribute.String(attrHelmChartVersion, v))
@@ -814,7 +900,7 @@ func (c *HelmClient) GetChartDependencies(ctx context.Context, repoURL, chartNam
 
 	loadedChart, err := c.loadChart(ctx, repoURL, chartName, version)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
+		return nil, fmt.Errorf("failed to load chart %s version %s: %w", chartName, version, err)
 	}
 
 	if loadedChart == nil {
@@ -840,7 +926,7 @@ func (c *HelmClient) GetChartImages(ctx context.Context, repoURL, chartName, ver
 
 	loadedChart, err := c.loadChart(ctx, repoURL, chartName, version)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load chart %s version %s: %v", chartName, version, err)
+		return nil, fmt.Errorf("failed to load chart %s version %s: %w", chartName, version, err)
 	}
 
 	if loadedChart == nil {

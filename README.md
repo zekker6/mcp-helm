@@ -137,7 +137,8 @@ allocation at startup, evicting the least recently used indexes when either limi
 one Helm client and its cache across requests. Parsed Go objects add memory overhead; this is not a process heap limit.
 Eviction does not change snapshots already held by active requests. Index files use a private temporary directory
 that is removed after parsing, including on download or parse failure. HTTP chart archives are loaded directly from
-memory. Existing files in shared Helm cache directories are not read or deleted.
+memory. Existing files in shared Helm cache directories are not read or deleted. Cached snapshots do not retain
+request contexts or download clients.
 
 ### Cache and download limits
 
@@ -176,7 +177,8 @@ not be retained. These source-byte budgets are not measured heap limits and do n
 The OCI budget includes manifests, configuration, chart layers, authentication responses, redirects and retries.
 Concurrent pulls have independent budgets. Responses without `Content-Length` are checked while reading; oversized
 downloads fail instead of being truncated and parsed. These limits do not cap concurrent requests or chart-rendering
-memory. Helm's decompressed chart-content limit still applies.
+memory. Helm's decompressed chart-content limit still applies. OCI downloads honor both caller cancellation and
+registry-request cancellation, including while reading response bodies.
 
 For example, allow a larger working set and larger individual indexes:
 
