@@ -25,11 +25,5 @@ jobs:
       - name: Run lint
         run: task lint
 
-      - name: Run test
-        run: task test
-
-      - name: Run build
-        run: task build
-
-      - name: Run e2e tests
-        run: task test:e2e
+      - name: Run all tests
+        run: task test:all

@@ -196,7 +196,9 @@ ingress-nginx. It checks the working set against the configured limits, replays 
 eight concurrent callers, verifies warm-cache reuse, and downloads one representative chart from each public
 repository. The repeated load phase does not hit public servers. The test logs source sizes, latency, failures,
 and quiescent Go heap usage, which includes the captured test fixtures and is not process RSS. Public endpoint or
-chart-format failures fail the test rather than being skipped. This opt-in check is separate from `task test`.
+chart-format failures fail the test rather than being skipped. `task test` keeps this network check disabled;
+`task test:all` builds the binary and runs the unit, end-to-end, and public-repository tests together.
+CI runs `task test:all` after linting, so the public-repository check also gates changes.
 For indexes that reference OCI charts, it also tests the direct OCI reference separately. The HTTP-repository loader
 currently does not follow `oci://` archive URLs, including Bitnami's nginx chart; use the direct OCI repository URL
 for those charts. This compatibility failure remains visible in the public test.

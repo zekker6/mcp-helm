@@ -29,7 +29,7 @@ type popularRepoSnapshot struct {
 // per repository is pulled upstream; warm-load loops never hit public hosts.
 func TestPopularRepositories(t *testing.T) {
 	if os.Getenv("MCP_HELM_TEST_PUBLIC_REPOS") != "1" {
-		t.Skip("public repository validation requires task test:repos")
+		t.Skip("public repository validation requires task test:repos or task test:all")
 	}
 	fixtures := []*popularRepoSnapshot{
 		{name: "prometheus", url: "https://prometheus-community.github.io/helm-charts", chart: "prometheus"},

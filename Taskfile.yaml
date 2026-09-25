@@ -48,11 +48,13 @@ tasks:
       - go test -v -run TestE2E ./internal/tools/...
 
   test:all:
-    desc: Run all tests (unit + e2e)
+    desc: Run all tests (unit + e2e + public repositories)
     deps:
       - build
+    env:
+      MCP_HELM_TEST_PUBLIC_REPOS: "1"
     cmds:
-      - go test ./...
+      - go test -count=1 -timeout=15m ./...
 
   build:
     cmds:
