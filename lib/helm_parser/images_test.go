@@ -443,6 +443,34 @@ func createMockChartWithSubcharts() *chartv2.Chart {
 	return parent
 }
 
+func TestGetChartImagesRejectsTemplateErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		template string
+	}{
+		{name: "required", template: `{{ required "image is required" .Values.image }}`},
+		{name: "fail", template: `{{ if not .Values.image }}{{ fail "image is required" }}{{ end }}{{ .Values.image }}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			chart := &chartv2.Chart{
+				Metadata:  &chartv2.Metadata{APIVersion: chartv2.APIVersionV2, Name: "test", Version: "1.0.0"},
+				Values:    map[string]any{"image": ""},
+				Templates: []*common.File{deploymentTemplate(tc.template)},
+			}
+
+			images, err := GetChartImages(t.Context(), chart, nil, false)
+			if err == nil || !strings.Contains(err.Error(), "image is required") {
+				t.Fatalf("missing image: images = %v, error = %v, want template error", images, err)
+			}
+
+			images, err = GetChartImages(t.Context(), chart, map[string]any{"image": "nginx:1"}, false)
+			if err != nil || len(images) != 1 || images[0].FullImage != "nginx:1" {
+				t.Fatalf("valid image: images = %v, error = %v, want nginx:1", images, err)
+			}
+		})
+	}
+}
+
 func TestGetChartImagesSubcharts(t *testing.T) {
 	tests := []struct {
 		name         string

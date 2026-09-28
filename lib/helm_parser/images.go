@@ -124,7 +124,7 @@ func renderChart(ctx context.Context, chart *chartv2.Chart, customValues map[str
 		return nil, err
 	}
 
-	e := engine.Engine{Strict: false, LintMode: true}
+	e := engine.Engine{Strict: false}
 	rendered, err := e.RenderWithContext(ctx, chart, valuesToRender)
 	if err != nil {
 		return nil, err
