@@ -1,0 +1,16 @@
+# MCP Helm Server
+
+> An MCP server that lets AI assistants query Helm repositories and charts, retrieving versions, values, contents, dependencies, and container images without a local Helm installation.
+
+Written in Go (1.26.0 required to build); installable via Docker, pre-built binaries, Mise, Go install, or from source, and runs in SSE or Streamable HTTP mode. Provides tools for listing charts and versions, getting chart values, contents, dependencies, and images, supporting both HTTP Helm repositories and OCI registries. A public test instance is available, with configurable index caching and memory-based cache limits.
+
+## Docs
+
+- [MCP Helm Server](https://raw.githubusercontent.com/zekker6/mcp-helm/master/README.md): MCP server providing tools to query Helm repositories and charts without local Helm installation.
+- [Features](https://github.com/zekker6/mcp-helm/blob/master/README.md#features): Available tools for listing charts, versions, values, contents, dependencies, and images, plus OCI registry support.
+- [Try without installation](https://github.com/zekker6/mcp-helm/blob/master/README.md#try-without-installation): Publicly available server instance at https://mcp-helm.zekker.dev/mcp for testing without installation.
+- [Installation](https://github.com/zekker6/mcp-helm/blob/master/README.md#installation): How to run with Docker, download pre-built binaries, install via Mise or Go, and build from source.
+- [Configuration](https://github.com/zekker6/mcp-helm/blob/master/README.md#configuration): MCP client setup, HTTP request size and timeout limits, and repository index caching behavior with eviction settings.
+- [Observability](https://github.com/zekker6/mcp-helm/blob/master/README.md#observability): OpenTelemetry traces, metrics and logs over OTLP, controlled by OTEL_ENABLED, with environment variables and endpoint schemes.
+- [Shutdown](https://github.com/zekker6/mcp-helm/blob/master/README.md#shutdown): Graceful shutdown budgets for draining requests and flushing telemetry, grace period settings, and fatal startup errors.
+- [Roadmap](https://github.com/zekker6/mcp-helm/blob/master/README.md#roadmap): Completed roadmap items: OpenTelemetry instrumentation, Helm chart tools, OCI registry support, and private HTTP repository credentials.
