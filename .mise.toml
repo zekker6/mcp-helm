@@ -2,7 +2,7 @@
 act = "0.2.89"
 goreleaser = "2.18.3"
 task = "3.54.0"
-golangci-lint = "2.14.0"
+golangci-lint = "2.15.0"
 "ubi:air-verse/air" = "1.67.4"
 node = "25"
 "npm:@modelcontextprotocol/inspector" = { version = "2.11.0", trust_policy_excludes = [
