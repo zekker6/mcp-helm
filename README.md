@@ -99,6 +99,10 @@ go install github.com/zekker6/mcp-helm/cmd/mcp-helm@latest
 
 > Note: Go 1.26.0 is required.
 
+Keep `k8s.io/kube-openapi` at `v0.0.0-20260721132016-d427ff9ee9ad` and Kustomize `api`/`kyaml` at
+`v0.21.2` while using Kubernetes modules `v0.37.1`. Newer revisions pull in `structured-merge-diff/v7`,
+which is incompatible with the Kubernetes modules' `structured-merge-diff/v6` types.
+
 1. Clone the repository:
    ```bash
    git clone https://github.com/zekker6/mcp-helm.git
