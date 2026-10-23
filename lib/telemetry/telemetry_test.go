@@ -17,7 +17,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
-	logglobal "go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/sdk/resource"
 )
 
@@ -152,7 +151,7 @@ func TestSetupDisabledIsNoop(t *testing.T) {
 
 	tracerProvider := otel.GetTracerProvider()
 	meterProvider := otel.GetMeterProvider()
-	loggerProvider := logglobal.GetLoggerProvider()
+	loggerProvider := otel.GetLoggerProvider()
 
 	tel, err := Setup(ctx, Config{}, ServiceInfo{Name: "mcp-helm", Version: "1.2.3"})
 	if err != nil {
@@ -165,7 +164,7 @@ func TestSetupDisabledIsNoop(t *testing.T) {
 	if otel.GetMeterProvider() != meterProvider {
 		t.Error("Setup registered a global meter provider while disabled")
 	}
-	if logglobal.GetLoggerProvider() != loggerProvider {
+	if otel.GetLoggerProvider() != loggerProvider {
 		t.Error("Setup registered a global logger provider while disabled")
 	}
 
