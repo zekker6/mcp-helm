@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/KimMachineGun/automemlimit v1.0.1
 	github.com/gobwas/glob v1.0.0
-	github.com/mark3labs/mcp-go v1.3.0
+	github.com/mark3labs/mcp-go v1.4.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
