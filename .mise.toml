@@ -1,6 +1,6 @@
 [tools]
 act = "0.2.96"
-goreleaser = "2.19.0"
+goreleaser = "2.20.0"
 task = "3.54.0"
 golangci-lint = "2.15.0"
 "ubi:air-verse/air" = "1.67.4"
