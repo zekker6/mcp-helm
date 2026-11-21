@@ -3,7 +3,7 @@ module github.com/zekker6/mcp-helm
 go 1.27.0
 
 require (
-	github.com/KimMachineGun/automemlimit v1.0.1
+	github.com/KimMachineGun/automemlimit v1.0.2
 	github.com/gobwas/glob v1.1.0
 	github.com/mark3labs/mcp-go v1.5.0
 	github.com/opencontainers/go-digest v1.0.0
